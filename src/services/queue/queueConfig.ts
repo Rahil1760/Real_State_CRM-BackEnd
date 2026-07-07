@@ -5,10 +5,29 @@ const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 // Parse redis URL safely
 let connectionOpts: any = {};
 try {
-  let normalizedUrlStr = REDIS_URL;
+  let normalizedUrlStr = REDIS_URL.trim();
+  
+  // If the user pasted a redis-cli connection command, extract the URL
+  if (normalizedUrlStr.includes('-u ')) {
+    const match = normalizedUrlStr.match(/-u\s+([^\s]+)/);
+    if (match && match[1]) {
+      normalizedUrlStr = match[1];
+    }
+  } else if (normalizedUrlStr.includes('redis-cli ')) {
+    const match = normalizedUrlStr.match(/(redis(?:s)?:\/\/[^\s]+)/);
+    if (match && match[1]) {
+      normalizedUrlStr = match[1];
+    }
+  }
+
   if (normalizedUrlStr.startsWith('https://')) {
     console.warn('[Queue] Warning: REDIS_URL starts with https://. Replacing with rediss:// for Redis connection.');
     normalizedUrlStr = normalizedUrlStr.replace(/^https:\/\//, 'rediss://');
+  }
+
+  // Force TLS (rediss) if the original string specifies --tls
+  if (REDIS_URL.includes('--tls') && normalizedUrlStr.startsWith('redis://')) {
+    normalizedUrlStr = normalizedUrlStr.replace(/^redis:\/\//, 'rediss://');
   }
 
   const url = new URL(normalizedUrlStr);
