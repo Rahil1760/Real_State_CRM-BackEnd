@@ -45,6 +45,11 @@ app.get('/api/hello-crm', (req: Request, res: Response) => {
   res.status(200).json({ message: 'hello crm' });
 });
 
+// Root Route
+app.get('/', (req: Request, res: Response) => {
+  res.send('Hello World');
+});
+
 // 1. Public & Global Platform routes
 app.use('/api/auth', authRouter);
 app.use('/api/tenants', tenantsRouter);
