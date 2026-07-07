@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "Full-stack AI Real Estate Sales Agent CRM Backend",
   "main": "dist/index.js",
+  "Environment": "Node",
+  "Region": "Singapore",
+  "Branch": "main",
+  "Root Directory": "",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
