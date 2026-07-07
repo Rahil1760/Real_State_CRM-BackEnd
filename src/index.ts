@@ -32,10 +32,25 @@ const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 5000;
 
+const allowedOrigins = [
+  'https://real-state-crm-front-end.vercel.app',
+  'https://real-state-crm-front-end.vercel.app/',
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://localhost:80'
+];
+
 app.use(cors({
-  origin: '*',
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes(origin + '/')) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-tenant-id', 'ngrok-skip-browser-warning']
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-tenant-id', 'ngrok-skip-browser-warning'],
+  credentials: true
 }));
 
 app.use(express.json());

@@ -5,10 +5,25 @@ import jwt from 'jsonwebtoken';
 let io: Server | null = null;
 
 export const initSocket = (server: HttpServer): Server => {
+  const allowedOrigins = [
+    'https://real-state-crm-front-end.vercel.app',
+    'https://real-state-crm-front-end.vercel.app/',
+    'http://localhost:5173',
+    'http://localhost:3000',
+    'http://localhost:80'
+  ];
+
   io = new Server(server, {
     cors: {
-      origin: '*',
+      origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes(origin + '/')) {
+          callback(null, true);
+        } else {
+          callback(new Error('Not allowed by CORS'));
+        }
+      },
       methods: ['GET', 'POST'],
+      credentials: true
     },
   });
 
