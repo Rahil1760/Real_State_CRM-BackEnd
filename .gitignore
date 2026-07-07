@@ -1,0 +1,58 @@
+node_modules
+# Dependencies
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# Build files
+dist/
+build/
+client/dist/
+server/dist/
+
+# Environment variables
+.env
+.env.*
+client/.env
+server/.env
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+
+# Coverage
+coverage/
+
+# Cache
+.cache/
+.parcel-cache/
+
+# Next.js
+.next/
+
+# Vite
+.vite/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# MongoDB local data (if any)
+data/
+
+# Package manager lock files (optional)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
