@@ -42,7 +42,9 @@ export const initWorkers = () => {
           .filter((location, index, arr) => arr.indexOf(location) === index)
           .join(", ");
 
-        const greeting = `Hello ${lead.name || "there"}! 👋 Welcome to AuraHome. I am Kayra, your AI assistant. I'll help you find the perfect property.
+        const companyName = await Tenant.find({ _id: lead.tenantId }).select('name');
+
+        const greeting = `Hello ${lead.name || "there"}! 👋 Welcome to ${companyName}. I am Kayra, your AI assistant. I'll help you find the perfect property.
 
         🏘️ Currently, we have projects available in: ${availableLocations}.`;
 
