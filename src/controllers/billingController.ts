@@ -6,9 +6,10 @@ import crypto from 'crypto';
 
 // Mapping of subscription tiers to resources limit
 const PLAN_LIMITS = {
-  free: { maxLeads: 50, maxUsers: 2, maxProperties: 5 },
-  starter: { maxLeads: 500, maxUsers: 5, maxProperties: 20 },
-  pro: { maxLeads: 5000, maxUsers: 15, maxProperties: 100 },
+  free: { maxLeads: 50, maxUsers: 1, maxProperties: 10 },
+  starter: { maxLeads: 50, maxUsers: 1, maxProperties: 10 },
+  pro: { maxLeads: 1500, maxUsers: 15, maxProperties: 100 },
+  growth: { maxLeads: 1500, maxUsers: 15, maxProperties: 100 },
   enterprise: { maxLeads: 999999, maxUsers: 999999, maxProperties: 999999 }, // unlimited
 };
 
@@ -31,7 +32,7 @@ export const upgradePlan = async (req: TenantRequest, res: Response) => {
     if (!tenantId) return res.status(400).json({ message: 'Tenant context missing' });
 
     const { plan, billingCycle } = req.body;
-    if (!plan || !['starter', 'pro', 'enterprise'].includes(plan)) {
+    if (!plan || !['starter', 'pro', 'growth', 'enterprise'].includes(plan)) {
       return res.status(400).json({ message: 'Invalid plan selected' });
     }
 
@@ -39,8 +40,8 @@ export const upgradePlan = async (req: TenantRequest, res: Response) => {
     if (!tenant) return res.status(404).json({ message: 'Tenant not found' });
 
     // Update plan details
-    const limits = PLAN_LIMITS[plan as 'starter' | 'pro' | 'enterprise'];
-    tenant.plan = plan;
+    const limits = PLAN_LIMITS[plan as 'starter' | 'pro' | 'growth' | 'enterprise'];
+    tenant.plan = plan as any;
     tenant.maxLeads = limits.maxLeads;
     tenant.maxUsers = limits.maxUsers;
     tenant.maxProperties = limits.maxProperties;
@@ -50,7 +51,15 @@ export const upgradePlan = async (req: TenantRequest, res: Response) => {
     await tenant.save();
 
     // Log simulated invoice
-    const amount = plan === 'starter' ? 999 : plan === 'pro' ? 2499 : 7999;
+    let amount = 0;
+    if (plan === 'starter') {
+      amount = 0;
+    } else if (plan === 'pro' || plan === 'growth') {
+      amount = billingCycle === 'annual' ? 9999 * 12 : 11999;
+    } else if (plan === 'enterprise') {
+      amount = 25000;
+    }
+
     const invoice = new Invoice({
       tenantId: tenant._id,
       amount,

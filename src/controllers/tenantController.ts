@@ -3,6 +3,17 @@ import bcrypt from 'bcryptjs';
 import Tenant from '../models/Tenant';
 import User from '../models/User';
 import { sendEmail } from '../services/notificationService';
+import Redis from 'ioredis';
+import { getConnection } from '../services/queue/queueConfig';
+
+let redisClient: Redis | null = null;
+const getRedis = () => {
+  if (!redisClient) {
+    const opts = getConnection();
+    redisClient = new Redis(opts);
+  }
+  return redisClient;
+};
 
 export const registerTenant = async (req: Request, res: Response) => {
   try {
@@ -97,7 +108,7 @@ export const updateTenantProfile = async (req: any, res: Response) => {
       return res.status(404).json({ message: 'Tenant profile not loaded' });
     }
 
-    const { whatsappPhoneId, whatsappToken, whatsappWelcomeTemplateName, senderDisplayName } = req.body;
+    const { whatsappPhoneId, whatsappToken, whatsappWelcomeTemplateName, senderDisplayName, marketingSpend, marketingSpendBreakdown } = req.body;
 
     const tenant = await Tenant.findById(req.tenant._id);
     if (!tenant) {
@@ -108,8 +119,31 @@ export const updateTenantProfile = async (req: any, res: Response) => {
     if (whatsappToken !== undefined) tenant.whatsappToken = whatsappToken;
     if (whatsappWelcomeTemplateName !== undefined) tenant.whatsappWelcomeTemplateName = whatsappWelcomeTemplateName;
     if (senderDisplayName !== undefined) tenant.senderDisplayName = senderDisplayName;
+    if (marketingSpend !== undefined) tenant.marketingSpend = Number(marketingSpend) || 0;
+    
+    if (marketingSpendBreakdown) {
+      tenant.marketingSpendBreakdown = {
+        meta: Number(marketingSpendBreakdown.meta) || 0,
+        google: Number(marketingSpendBreakdown.google) || 0,
+        other: Number(marketingSpendBreakdown.other) || 0,
+      };
+      tenant.marketingSpend = tenant.marketingSpendBreakdown.meta + tenant.marketingSpendBreakdown.google + tenant.marketingSpendBreakdown.other;
+    }
 
     await tenant.save();
+
+    // Invalidate Redis cache
+    try {
+      const redis = getRedis();
+      const tenantIdStr = tenant._id.toString();
+      const slugStr = tenant.slug || '';
+      await redis.del(`tenant:id:${tenantIdStr}`);
+      if (slugStr) {
+        await redis.del(`tenant:slug:${slugStr}`);
+      }
+    } catch (cacheErr) {
+      console.error('Error clearing tenant cache:', cacheErr);
+    }
 
     return res.status(200).json({
       message: 'Tenant profile updated successfully',

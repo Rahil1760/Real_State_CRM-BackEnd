@@ -9,6 +9,7 @@ import { getIO } from '../socket/socketService';
 import { sendEmail, sendSMS } from '../notificationService';
 import { getQueue } from '../queue/queueConfig';
 import { checkFaqCache } from './semanticCache';
+import { analyzeFeedbackSentiment } from './llmProviderService';
 
 const MOCK_PROPERTY_ID = '507f1f77bcf86cd799439011';
 
@@ -302,14 +303,7 @@ export const scoreLeadPostVisit = async (leadId: string, feedbackText: string): 
   const lead = await Lead.findById(leadId);
   if (!lead) return 'Lead not found';
 
-  const lowerText = feedbackText.toLowerCase();
-  let score: 'Hot' | 'Warm' | 'Cold' = 'Warm';
-
-  if (['love', 'buy', 'excellent', 'perfect', 'immediate'].some((w) => lowerText.includes(w))) {
-    score = 'Hot';
-  } else if (['bad', 'expensive', 'reject', 'no', 'disliked'].some((w) => lowerText.includes(w))) {
-    score = 'Cold';
-  }
+  const score = await analyzeFeedbackSentiment(feedbackText);
 
   lead.score = score;
   lead.status = score === 'Cold' ? 'Cold' : 'Visit Done';

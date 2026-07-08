@@ -225,6 +225,12 @@ export const deleteLead = async (req: TenantRequest, res: Response) => {
     if (!lead) {
       return res.status(404).json({ message: 'Lead not found' });
     }
+    
+    const io = getIO();
+    if (io) {
+      io.to('/crm').emit('lead:deleted', req.params.id);
+    }
+
     return res.status(200).json({ message: 'Lead deleted successfully' });
   } catch (error: any) {
     return res.status(500).json({ message: error.message || 'Internal server error' });
@@ -263,6 +269,13 @@ export const importLeads = async (req: TenantRequest, res: Response) => {
 
       let lead = await leadRepository.findOne(tenantId, { mobile });
       if (!lead) {
+        if (req.tenant) {
+          const currentCount = await Lead.countDocuments({ tenantId });
+          if (currentCount >= req.tenant.maxLeads) {
+            break; // Stop importing once limit is reached
+          }
+        }
+
         lead = await leadRepository.create(tenantId, {
           name: name || 'Anonymous',
           mobile,

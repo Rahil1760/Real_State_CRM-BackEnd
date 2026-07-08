@@ -6,7 +6,7 @@ export interface ITenant extends Document {
   ownerEmail: string;
   phone: string;
   logo?: string;
-  plan: 'free' | 'starter' | 'pro' | 'enterprise';
+  plan: 'free' | 'starter' | 'pro' | 'growth' | 'enterprise';
   subscriptionId?: string;
   subscriptionStatus: 'active' | 'paused' | 'cancelled' | 'trial';
   trialEndsAt: Date;
@@ -20,6 +20,12 @@ export interface ITenant extends Document {
   razorpaySecret?: string;
   whatsappWelcomeTemplateName?: string;
   senderDisplayName?: string;
+  marketingSpend?: number;
+  marketingSpendBreakdown?: {
+    meta: number;
+    google: number;
+    other: number;
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -33,7 +39,7 @@ const TenantSchema: Schema = new Schema(
     logo: { type: String },
     plan: {
       type: String,
-      enum: ['free', 'starter', 'pro', 'enterprise'],
+      enum: ['free', 'starter', 'pro', 'growth', 'enterprise'],
       default: 'free',
     },
     subscriptionId: { type: String },
@@ -60,6 +66,12 @@ const TenantSchema: Schema = new Schema(
     razorpaySecret: { type: String },
     whatsappWelcomeTemplateName: { type: String, default: 'lead_welcome_v1' },
     senderDisplayName: { type: String, default: '' },
+    marketingSpend: { type: Number, default: 0 },
+    marketingSpendBreakdown: {
+      meta: { type: Number, default: 0 },
+      google: { type: Number, default: 0 },
+      other: { type: Number, default: 0 },
+    },
   },
   { timestamps: true }
 );

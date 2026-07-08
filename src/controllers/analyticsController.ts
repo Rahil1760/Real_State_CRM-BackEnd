@@ -43,7 +43,8 @@ export const getAggregatedStats = async (req: TenantRequest, res: Response) => {
 
     const conversionRate = totalLeads > 0 ? (paidBookingsCount / totalLeads) * 100 : 0;
 
-    const simulatedMarketingSpend = totalLeads * 10000;
+    const customMarketingSpend = req.tenant?.marketingSpend || 0;
+    const simulatedMarketingSpend = customMarketingSpend > 0 ? customMarketingSpend : (totalLeads * 10000);
     const roi = simulatedMarketingSpend > 0 ? ((totalRevenue - simulatedMarketingSpend) / simulatedMarketingSpend) * 100 : 0;
 
     // Leads by source breakdown scoped by tenant
@@ -77,6 +78,8 @@ export const getAggregatedStats = async (req: TenantRequest, res: Response) => {
         conversionRate: Number(conversionRate.toFixed(2)),
         roi: Number(roi.toFixed(2)),
         marketingSpend: simulatedMarketingSpend,
+        customMarketingSpend: customMarketingSpend,
+        customMarketingSpendBreakdown: req.tenant?.marketingSpendBreakdown || { meta: 0, google: 0, other: 0 },
       },
       sources: leadsBySource.map(s => ({ name: s._id, count: s.count })),
       pipeline: leadsByStatus.map(p => ({ name: p._id, count: p.count })),

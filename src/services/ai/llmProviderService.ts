@@ -210,3 +210,40 @@ export const generateLLMResponse = async (
     return await callGemini(enrichedInstruction, history, textMessage);
   }
 };
+
+export const analyzeFeedbackSentiment = async (feedbackText: string): Promise<'Hot' | 'Warm' | 'Cold'> => {
+  const prompt = `Analyze the following customer feedback from a real estate site visit:
+"${feedbackText}"
+
+Determine the sentiment and purchase intent. Respond with exactly one of the following words: "Hot", "Warm", or "Cold".
+- "Hot" represents positive sentiment, high purchase intent, loved the property, ready to buy or proceed.
+- "Warm" represents neutral or mild interest, average experience, needs more follow-ups, generic feedback.
+- "Cold" represents low interest, negative feedback, rejected the property, too expensive, or no interest.
+
+Only output one of these three words: Hot, Warm, Cold. Do not write a sentence, punctuation, or explanations.`;
+
+  try {
+    const provider = process.env.LLM_PROVIDER || 'gemini';
+    let rawResponse = '';
+
+    if (provider === 'groq') {
+      rawResponse = await callGroq(prompt, [], '');
+    } else {
+      rawResponse = await callGemini(prompt, [], '');
+    }
+
+    const cleaned = rawResponse.trim().replace(/[^\w]/g, '');
+    if (cleaned === 'Hot') return 'Hot';
+    if (cleaned === 'Cold') return 'Cold';
+    return 'Warm';
+  } catch (err) {
+    console.error('[Sentiment Analysis Error] Fallback to keyword matching:', err);
+    const lowerText = feedbackText.toLowerCase();
+    if (['love', 'buy', 'excellent', 'perfect', 'immediate'].some((w) => lowerText.includes(w))) {
+      return 'Hot';
+    } else if (['bad', 'expensive', 'reject', 'no', 'disliked', 'not interested'].some((w) => lowerText.includes(w))) {
+      return 'Cold';
+    }
+    return 'Warm';
+  }
+};

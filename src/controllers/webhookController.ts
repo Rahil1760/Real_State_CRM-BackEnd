@@ -3,6 +3,7 @@ import Lead from '../models/Lead';
 import Tenant from '../models/Tenant';
 import { getIO } from '../services/socket/socketService';
 import { getQueue } from '../services/queue/queueConfig';
+import { sendWhatsAppText } from '../services/whatsapp/whatsappService';
 
 // Unified Webhook for Lead Sources (Facebook, Google, Portals, Forms)
 export const unifiedLeadWebhook = async (req: Request, res: Response) => {
@@ -79,6 +80,18 @@ export const unifiedLeadWebhook = async (req: Request, res: Response) => {
       }
       return res.status(200).json({ status: 'success', message: 'Deduplicated existing lead', leadId: lead._id });
     } else {
+      // Check if lead limit is reached before creating!
+      const tenant = await Tenant.findById(tenantId);
+      if (tenant) {
+        const currentCount = await Lead.countDocuments({ tenantId });
+        if (currentCount >= tenant.maxLeads) {
+          return res.status(429).json({
+            message: `Lead limit reached (${currentCount}/${tenant.maxLeads}) for this workspace. Please contact support.`,
+            limitReached: true,
+          });
+        }
+      }
+
       lead = new Lead({
         tenantId,
         name,
@@ -204,6 +217,18 @@ export const receiveWhatsApp = async (req: Request, res: Response) => {
     let lead = await Lead.findOne({ tenantId, mobile: cleanFrom });
 
     if (!lead) {
+      // Check if lead limit is reached before creating!
+      const tenant = await Tenant.findById(tenantId);
+      if (tenant) {
+        const currentCount = await Lead.countDocuments({ tenantId });
+        if (currentCount >= tenant.maxLeads) {
+          console.warn(`[Limit Exceeded] Tenant ${tenantId} reached maxLeads limit (${currentCount}/${tenant.maxLeads}) via WhatsApp webhook intake.`);
+          const limitMessage = `Thank you for contacting us! We are currently unable to register new requests. Please contact support.`;
+          await sendWhatsAppText('', cleanFrom, limitMessage, true, tenantId);
+          return res.status(200).send('EVENT_RECEIVED');
+        }
+      }
+
       lead = new Lead({
         tenantId,
         name: contactName,

@@ -9,14 +9,15 @@ import Booking from '../../models/Booking';
 import { getIO } from '../socket/socketService';
 import { sendEmail, sendSMS } from '../notificationService';
 import { getQueue } from '../queue/queueConfig';
+import { analyzeFeedbackSentiment } from '../ai/llmProviderService';
 
-export const sendWhatsAppText = async (leadId: string, to: string, text: string, skipHistoryLog: boolean = false): Promise<boolean> => {
+export const sendWhatsAppText = async (leadId: string, to: string, text: string, skipHistoryLog: boolean = false, tenantIdOverride?: string): Promise<boolean> => {
   try {
     console.log(`[WhatsApp Dispatch] Outbox -> To: ${to}, Message: "${text}"`);
 
     // Fetch Lead to get tenantId
-    const lead = await Lead.findById(leadId);
-    let tenantId = lead?.tenantId;
+    const lead = leadId ? await Lead.findById(leadId) : null;
+    let tenantId = tenantIdOverride || lead?.tenantId;
     let tenant = null;
 
     if (tenantId) {
@@ -368,27 +369,7 @@ export const scoreLeadPostVisit = async (leadId: string, feedbackText: string): 
   const lead = await Lead.findById(leadId);
   if (!lead) return 'Lead not found';
 
-  // Sentiment Analysis simulation
-  const lowerText = feedbackText.toLowerCase();
-  let score: 'Hot' | 'Warm' | 'Cold' = 'Warm';
-
-  if (
-    lowerText.includes('love') ||
-    lowerText.includes('buy') ||
-    lowerText.includes('excellent') ||
-    lowerText.includes('perfect') ||
-    lowerText.includes('immediate')
-  ) {
-    score = 'Hot';
-  } else if (
-    lowerText.includes('bad') ||
-    lowerText.includes('expensive') ||
-    lowerText.includes('reject') ||
-    lowerText.includes('no') ||
-    lowerText.includes('disliked')
-  ) {
-    score = 'Cold';
-  }
+  const score = await analyzeFeedbackSentiment(feedbackText);
 
   lead.score = score;
   lead.status = score === 'Cold' ? 'Cold' : 'Visit Done';

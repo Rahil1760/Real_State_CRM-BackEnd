@@ -88,34 +88,39 @@ export const approveBooking = async (req: TenantRequest, res: Response) => {
     const property = await propertyRepository.findOne(tenantId, { _id: booking.propertyId });
     if (!property) return res.status(404).json({ message: 'Property not found' });
 
-    const paymentLink = `https://checkout.razorpay.com/v1/paylink/plink_${booking._id}`;
-
-    booking.status = 'Approved';
-    booking.paymentLink = paymentLink;
+    booking.status = 'Paid';
+    booking.paymentId = `cash_${Date.now()}`;
     booking.approvedBy = (req as any).user?.id;
     await booking.save();
 
+    lead.status = 'Booked';
     lead.timeline.push({
-      event: 'Booking Approved',
+      event: 'Booking Approved & Paid (Cash)',
       timestamp: new Date(),
       actor: 'Sales Manager',
-      details: `Booking approved. Payment link: ${paymentLink}`,
+      details: `Booking approved and recorded as Cash Payment of ₹${booking.amount.toLocaleString()}. Lead status set to Booked.`,
     });
     await lead.save();
 
-    const checklistText = `Hello ${lead.name}, your booking request for *${property.title}* has been approved!\n\n📋 *Document Checklist needed:* \n1. PAN Card copy\n2. Aadhaar Card copy\n3. 3 months salary slips / tax returns\n4. Passport size photo.\n\n💳 *Payment Link (Booking Token ₹${booking.amount.toLocaleString()}):*\n${paymentLink}`;
+    const checklistText = `Hello ${lead.name}, your booking request for *${property.title}* has been approved and recorded as cash payment! Welcome to the AuraHome family!\n\n📋 *Document Checklist needed:* \n1. PAN Card copy\n2. Aadhaar Card copy\n3. 3 months salary slips / tax returns\n4. Passport size photo.`;
     await sendWhatsAppText(lead._id.toString(), lead.mobile, checklistText);
 
     await sendEmail(
       lead._id.toString(),
       lead.email || 'customer@aurahome.com',
-      'Booking Request Approved - AuraHome',
-      `Dear ${lead.name},\n\nYour purchase booking for ${property.title} has been approved. Clear the token amount below:\n\n${paymentLink}`
+      'Booking Confirmed (Cash Payment Received) - AuraHome',
+      `Dear ${lead.name},\n\nYour purchase booking for ${property.title} has been approved and confirmed. We have successfully registered your cash token payment of ₹${booking.amount.toLocaleString()}.`
     );
 
     const io = getIO();
     if (io) {
       io.to('/crm').emit('lead:updated', lead);
+      io.to('/crm').emit('booking:confirmed', {
+        bookingId: booking._id,
+        leadId: lead._id,
+        amount: booking.amount,
+        timestamp: new Date(),
+      });
     }
 
     return res.status(200).json(booking);

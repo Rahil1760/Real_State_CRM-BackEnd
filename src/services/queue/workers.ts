@@ -13,7 +13,7 @@ import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import pdfParse from 'pdf-parse';
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
-import { processAIConversation, searchProperties } from '../ai/aiService';
+import { processAIConversation, searchProperties, scoreLeadPostVisit } from '../ai/aiService';
 import { sendWhatsAppText, sendWhatsAppTemplate } from '../whatsapp/whatsappService';
 import { sendEmail, sendSMS } from '../notificationService';
 import { getIO } from '../socket/socketService';
@@ -142,27 +142,7 @@ export const initWorkers = () => {
     'score-lead',
     async (job) => {
       const { leadId, feedback } = job.data;
-      const lead = await Lead.findById(leadId);
-      if (!lead) return;
-
-      // Score processing
-      const textLower = feedback.toLowerCase();
-      let score: 'Hot' | 'Warm' | 'Cold' = 'Warm';
-      if (textLower.includes('love') || textLower.includes('buy') || textLower.includes('perfect')) {
-        score = 'Hot';
-      } else if (textLower.includes('bad') || textLower.includes('expensive') || textLower.includes('no')) {
-        score = 'Cold';
-      }
-
-      lead.score = score;
-      lead.status = score === 'Cold' ? 'Cold' : 'Visit Done';
-      lead.timeline.push({
-        event: 'Async Feedback Scoring',
-        timestamp: new Date(),
-        actor: 'AI',
-        details: `Sentiment scored as: ${score} based on feedback: "${feedback}"`,
-      });
-      await lead.save();
+      await scoreLeadPostVisit(leadId, feedback);
     },
     { connection }
   );
@@ -325,6 +305,18 @@ export const initWorkers = () => {
                 batch.success += 1;
               }
             } else {
+              // Check if limit is reached!
+              const currentCount = await Lead.countDocuments({ tenantId });
+              if (tenant && currentCount >= tenant.maxLeads) {
+                batch.rowErrors.push({ 
+                  row: rowNum, 
+                  error: `Skipped: Lead limit reached for this workspace (${currentCount}/${tenant.maxLeads}). Please upgrade your plan.` 
+                });
+                batch.failed += 1;
+                await batch.save();
+                continue;
+              }
+
               lead = new Lead({
                 tenantId,
                 name: name || 'Anonymous',

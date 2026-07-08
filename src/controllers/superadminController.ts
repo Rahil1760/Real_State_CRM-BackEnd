@@ -77,11 +77,12 @@ export const planOverride = async (req: Request, res: Response) => {
         if (plan) {
             tenant.plan = plan;
             const limits = {
-                free: { maxLeads: 50, maxUsers: 2, maxProperties: 5 },
-                starter: { maxLeads: 500, maxUsers: 5, maxProperties: 20 },
-                pro: { maxLeads: 5000, maxUsers: 15, maxProperties: 100 },
+                free: { maxLeads: 50, maxUsers: 1, maxProperties: 10 },
+                starter: { maxLeads: 50, maxUsers: 1, maxProperties: 10 },
+                pro: { maxLeads: 1500, maxUsers: 15, maxProperties: 100 },
+                growth: { maxLeads: 1500, maxUsers: 15, maxProperties: 100 },
                 enterprise: { maxLeads: 999999, maxUsers: 999999, maxProperties: 999999 },
-            }[plan as 'free' | 'starter' | 'pro' | 'enterprise'] || PLAN_LIMITS_FALLBACK();
+            }[plan as 'free' | 'starter' | 'pro' | 'growth' | 'enterprise'] || PLAN_LIMITS_FALLBACK();
 
             tenant.maxLeads = limits.maxLeads;
             tenant.maxUsers = limits.maxUsers;
@@ -104,7 +105,7 @@ export const planOverride = async (req: Request, res: Response) => {
     }
 };
 
-const PLAN_LIMITS_FALLBACK = () => ({ maxLeads: 50, maxUsers: 2, maxProperties: 5 });
+const PLAN_LIMITS_FALLBACK = () => ({ maxLeads: 50, maxUsers: 1, maxProperties: 10 });
 
 export const impersonateTenant = async (req: Request, res: Response) => {
     try {
