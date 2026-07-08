@@ -750,11 +750,7 @@ const polishWithAI = async (lead: ILead, baseResponse: string): Promise<string> 
 
 // --- Main Entry Point ---
 export const processIncomingMessage = async (leadId: string, textMessage: string): Promise<void> => {
-  const lead = await Lead.findByIdAndUpdate(
-    leadId,
-    { $inc: { 'aiContext.attempts': 1 } },
-    { new: true },
-  );
+  let lead = await Lead.findById(leadId);
   if (!lead) {
     console.error(`processIncomingMessage: lead ${leadId} not found`);
     return;
@@ -762,6 +758,87 @@ export const processIncomingMessage = async (leadId: string, textMessage: string
 
   const io = getIO();
   const streamEvent = `ai:stream:${leadId}`;
+
+  // Check if attempts already reached 20
+  const currentAttempts = lead.aiContext?.attempts || 0;
+  if (currentAttempts >= 20) {
+    console.log(`[Limit Exceeded] Lead ${leadId} has reached ${currentAttempts} attempts. Bypassing AI.`);
+
+    // Resolve contacts
+    const User = require('../../models/User').default;
+    const Tenant = require('../../models/Tenant').default;
+
+    let contactPerson: { name: string; role: string; phone: string } | null = null;
+
+    if (lead.assignedTo) {
+      const assignedUser = await User.findById(lead.assignedTo);
+      if (assignedUser && assignedUser.phone && ['Sales Executive', 'Sales Manager'].includes(assignedUser.role)) {
+        contactPerson = {
+          name: assignedUser.name,
+          role: assignedUser.role,
+          phone: assignedUser.phone
+        };
+      }
+    }
+
+    if (!contactPerson) {
+      const exec = await User.findOne({
+        tenantId: lead.tenantId,
+        role: 'Sales Executive',
+        phone: { $ne: '' }
+      });
+      if (exec) {
+        contactPerson = {
+          name: exec.name,
+          role: 'Sales Executive',
+          phone: exec.phone!
+        };
+      }
+    }
+
+    if (!contactPerson) {
+      const manager = await User.findOne({
+        tenantId: lead.tenantId,
+        role: 'Sales Manager',
+        phone: { $ne: '' }
+      });
+      if (manager) {
+        contactPerson = {
+          name: manager.name,
+          role: 'Sales Manager',
+          phone: manager.phone!
+        };
+      }
+    }
+
+    if (!contactPerson) {
+      const tenant = await Tenant.findById(lead.tenantId);
+      if (tenant && tenant.phone) {
+        contactPerson = {
+          name: tenant.name,
+          role: 'Admin',
+          phone: tenant.phone
+        };
+      }
+    }
+
+    let limitMessage = 'Please contact to proceed.';
+    if (contactPerson) {
+      limitMessage = `Please contact the concern person to get more fetails about this: ${contactPerson.name} (${contactPerson.role}) at ${contactPerson.phone}.`;
+    }
+
+    if (io) io.to('/crm').emit(streamEvent, { token: limitMessage });
+    await sendWhatsAppText(leadId, lead.mobile, limitMessage, true);
+    return;
+  }
+
+  // Not exceeded -> increment and save
+  lead = await Lead.findByIdAndUpdate(
+    leadId,
+    { $inc: { 'aiContext.attempts': 1 } },
+    { new: true },
+  );
+  if (!lead) return;
 
   if (io) io.to('/crm').emit(streamEvent, { token: '...' });
 
