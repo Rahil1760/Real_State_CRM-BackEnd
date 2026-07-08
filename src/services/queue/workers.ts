@@ -35,7 +35,18 @@ export const initWorkers = () => {
         lead.status = 'Qualifying';
         await lead.save();
 
-        const greeting = `Hello ${lead.name || 'there'}! Welcome to AuraHome. I am your AI assistant. I'll help match you with the perfect property. Could you please share your budget, preferred location, property type (Apartment, Villa, Plot, or Commercial), and whether you are buying or investing?`;
+        const properties = await Property.find({ tenantId: lead.tenantId });
+
+        const availableLocations = properties
+          .map(property => property.location)
+          .filter((location, index, arr) => arr.indexOf(location) === index)
+          .join(", ");
+
+        const greeting = `Hello ${lead.name || "there"}! 👋 Welcome to AuraHome. I am Kayra, your AI assistant. I'll help you find the perfect property.
+
+        🏘️ Currently, we have projects available in: ${availableLocations}.`;
+
+        // const greeting = `Hello ${lead.name || 'there'}! Welcome to AuraHome. I am Kayra your AI assistant. I'll help match you with the perfect property. Could you please share your budget, preferred location, property type (Apartment, Villa, Plot, or Commercial), and whether you are buying or investing?`;
 
         await sendWhatsAppText(lead._id.toString(), lead.mobile, greeting);
       } else if (job.name === 'conversation-turn') {

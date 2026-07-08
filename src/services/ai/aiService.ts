@@ -107,6 +107,7 @@ If the lead asks to speak to a human, call a representative, or escalate, share 
   const allProperties = await Property.find({ tenantId: lead.tenantId });
   const uniqueLocations = Array.from(new Set(allProperties.map(p => p.location).filter(Boolean)));
   const locationsStr = uniqueLocations.join(', ') || 'None';
+  console.log(locationsStr, 'location')
 
   const locationConstraintText = `
 === PROJECT LOCATION LIMITATION ===
