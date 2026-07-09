@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import FaqCache from '../../models/FaqCache';
+import { faqVectorIndex, IFaqCache } from '../../models/FaqCache';
 import { generateQueryEmbedding } from './aiTools';
 
 export interface CacheResult {
@@ -15,43 +15,26 @@ export const checkFaqCache = async (
   projectId: string
 ): Promise<CacheResult | null> => {
   try {
-    if (!mongoose.Types.ObjectId.isValid(tenantId) || !mongoose.Types.ObjectId.isValid(projectId)) {
+    if (!tenantId || !projectId) {
       return null;
     }
 
     const queryEmbedding = await generateQueryEmbedding(message);
 
-    const results = await FaqCache.aggregate([
-      {
-        $vectorSearch: {
-          index: 'faq_vector_index', // Assuming they name the index faq_vector_index
-          path: 'embedding',
-          queryVector: queryEmbedding,
-          numCandidates: 50,
-          limit: 1,
-          filter: {
-            tenantId: new mongoose.Types.ObjectId(tenantId),
-            projectId: new mongoose.Types.ObjectId(projectId),
-          },
-        },
-      },
-      {
-        $project: {
-          answer: 1,
-          isGuardedFact: 1,
-          category: 1,
-          score: { $meta: 'vectorSearchScore' },
-        },
-      },
-    ]);
+    const results = await faqVectorIndex.query<IFaqCache>({
+      vector: queryEmbedding,
+      topK: 1,
+      includeMetadata: true,
+      filter: `tenantId = '${tenantId}' AND projectId = '${projectId}'`,
+    });
 
     if (results && results.length > 0) {
       const topMatch = results[0];
-      if (topMatch.score >= 0.90) {
+      if (topMatch.score >= 0.90 && topMatch.metadata) {
         return {
-          answer: topMatch.answer,
-          isGuardedFact: topMatch.isGuardedFact,
-          category: topMatch.category,
+          answer: topMatch.metadata.answer,
+          isGuardedFact: topMatch.metadata.isGuardedFact,
+          category: topMatch.metadata.category,
           score: topMatch.score,
         };
       }

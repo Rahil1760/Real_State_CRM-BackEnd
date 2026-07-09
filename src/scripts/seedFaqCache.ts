@@ -1,7 +1,6 @@
-import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import path from 'path';
-import FaqCache from '../models/FaqCache';
+import { faqVectorIndex } from '../models/FaqCache';
 import { generateQueryEmbedding } from '../services/ai/aiTools';
 
 dotenv.config({ path: path.join(__dirname, '../../.env') });
@@ -48,39 +47,34 @@ async function runSeeder() {
     process.exit(1);
   }
 
-  const mongoUri = process.env.MONGODB_URI;
-  if (!mongoUri) {
-    console.error('MONGODB_URI not found in .env');
-    process.exit(1);
-  }
-
   try {
-    await mongoose.connect(mongoUri);
-    console.log('Connected to MongoDB');
-
     let count = 0;
     for (const faq of seedFAQs) {
       console.log(`Generating embedding for: "${faq.question}"`);
-      const embedding = await generateQueryEmbedding(faq.question);
-      
-      const newFaq = new FaqCache({
-        tenantId: new mongoose.Types.ObjectId(tenantId),
-        projectId: new mongoose.Types.ObjectId(projectId),
-        question: faq.question,
-        answer: faq.answer,
-        category: faq.category,
-        embedding,
-        isGuardedFact: faq.isGuardedFact,
+      const embedding = await generateQueryEmbedding(
+        `${faq.question}\n${faq.answer}`
+      );
+
+      const id = `${tenantId}-${projectId}-${count}`;
+
+      await faqVectorIndex.upsert({
+        id: id,
+        vector: embedding,
+        metadata: {
+          tenantId,
+          projectId,
+          question: faq.question,
+          answer: faq.answer,
+          category: faq.category,
+          isGuardedFact: faq.isGuardedFact,
+        }
       });
-      await newFaq.save();
       count++;
     }
 
-    console.log(`Successfully seeded ${count} FAQs.`);
+    console.log(`Successfully seeded ${count} FAQs to Upstash Vector.`);
   } catch (error) {
     console.error('Error during seeding:', error);
-  } finally {
-    await mongoose.disconnect();
   }
 }
 
