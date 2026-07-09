@@ -66,8 +66,8 @@ export const registerTenant = async (req: Request, res: Response) => {
     await sendEmail(
       null,
       email,
-      'Welcome to AuraHome SaaS Platform!',
-      `Dear ${name},\n\nThank you for choosing AuraHome for your company: ${companyName}.\n\nYour subdomain slug is: ${cleanSlug}. You can log in using: admin@example.com / ${email}.\n\nYour 14-day free trial is active with limits: 50 leads, 2 team users, and 5 properties.\n\nBest,\nThe AuraHome team`
+      'Welcome to NextLead SaaS Platform!',
+      `Dear ${name},\n\nThank you for choosing NextLead for your company: ${companyName}.\n\nYour subdomain slug is: ${cleanSlug}. You can log in using: admin@example.com / ${email}.\n\nYour 14-day free trial is active with limits: 50 leads, 2 team users, and 5 properties.\n\nBest,\nThe NextLead team`
     );
 
     return res.status(201).json({
@@ -115,8 +115,27 @@ export const updateTenantProfile = async (req: any, res: Response) => {
       return res.status(404).json({ message: 'Tenant not found' });
     }
 
-    if (whatsappPhoneId !== undefined) tenant.whatsappPhoneId = whatsappPhoneId;
-    if (whatsappToken !== undefined) tenant.whatsappToken = whatsappToken;
+    if (whatsappPhoneId !== undefined) {
+      const trimmedPhoneId = whatsappPhoneId.trim();
+      if (!trimmedPhoneId) {
+        return res.status(400).json({ message: 'WhatsApp Phone ID is required and cannot be empty.' });
+      }
+      if (!/^\d{15,18}$/.test(trimmedPhoneId)) {
+        return res.status(400).json({ message: 'Invalid WhatsApp Phone ID. It must be a 15 to 18-digit number.' });
+      }
+      tenant.whatsappPhoneId = trimmedPhoneId;
+    }
+
+    if (whatsappToken !== undefined) {
+      const trimmedToken = whatsappToken.trim();
+      if (!trimmedToken) {
+        return res.status(400).json({ message: 'Access Token is required and cannot be empty.' });
+      }
+      if (!/^EA[a-zA-Z0-9_-]+$/.test(trimmedToken)) {
+        return res.status(400).json({ message: 'Invalid Access Token. It must be a valid Meta Access Token starting with "EA".' });
+      }
+      tenant.whatsappToken = trimmedToken;
+    }
     if (whatsappWelcomeTemplateName !== undefined) tenant.whatsappWelcomeTemplateName = whatsappWelcomeTemplateName;
     if (senderDisplayName !== undefined) tenant.senderDisplayName = senderDisplayName;
     if (marketingSpend !== undefined) tenant.marketingSpend = Number(marketingSpend) || 0;

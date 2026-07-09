@@ -95,6 +95,13 @@ export const tenantMiddleware = async (
       });
     }
 
+    if (tenant.subscriptionStatus === 'paused') {
+      return res.status(403).json({
+        message: 'Subscription paused. Please contact support to resume your subscription.',
+        status: 'paused',
+      });
+    }
+
     // Attach tenant profile to request object
     req.tenant = tenant;
     next();

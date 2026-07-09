@@ -1,4 +1,4 @@
-import nodemailer from 'nodemailer';
+﻿import nodemailer from 'nodemailer';
 import Notification from '../models/Notification';
 import Lead from '../models/Lead';
 import Tenant from '../models/Tenant';
@@ -56,7 +56,7 @@ export const sendEmail = async (leadId: string | null, to: string, subject: stri
     // Try real send (fallback if user details are mock)
     if (process.env.SMTP_USER && !process.env.SMTP_USER.startsWith('mock')) {
       await transporter.sendMail({
-        from: '"AuraHome CRM" <no-reply@aurahome.com>',
+        from: '"NextLead CRM" <no-reply@NextLead.com>',
         to,
         subject,
         text,

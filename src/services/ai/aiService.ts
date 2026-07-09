@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+﻿import mongoose from 'mongoose';
 import Fuse from 'fuse.js';
 import Lead, { ILead } from '../../models/Lead';
 import Property from '../../models/Property';
@@ -13,7 +13,7 @@ import { analyzeFeedbackSentiment } from './llmProviderService';
 
 const MOCK_PROPERTY_ID = '507f1f77bcf86cd799439011';
 
-export const AURA_SYSTEM_PROMPT = `You are Kayra, the intelligent and welcoming AI assistant for AuraHome real estate. 
+export const AURA_SYSTEM_PROMPT = `You are Kayra, the intelligent and welcoming AI assistant for NextLead real estate. 
 
 Your primary goal is to qualify leads by collecting their property preferences (budget, location, property type, and intent) and seamlessly scheduling a site visit. 
 
@@ -128,7 +128,7 @@ CRITICAL RULE: When proposing, recommending, or discussing project locations, yo
     const propId = lead.aiContext.proposedPropertyId;
     if (propId === MOCK_PROPERTY_ID || propId === 'mock_property_id') {
       propertyContext = `
-Proposed Property Details (already presented to the lead — do NOT re-introduce it):
+Proposed Property Details (already presented to the lead â€” do NOT re-introduce it):
 - Title: ${propertyDetails?.title}
 - Location: ${propertyDetails?.location}
 - Price: ${propertyDetails?.price.toLocaleString()}
@@ -140,10 +140,10 @@ Proposed Property Details (already presented to the lead — do NOT re-introduce
         const prop = await Property.findById(propId);
         if (prop) {
           propertyContext = `
-Proposed Property Details (already presented to the lead — do NOT re-introduce it):
+Proposed Property Details (already presented to the lead â€” do NOT re-introduce it):
 - Title: ${prop.title}
 - Location: ${prop.location}
-- Price: ₹${prop.price.toLocaleString()}
+- Price: â‚¹${prop.price.toLocaleString()}
 - Amenities: ${prop.amenities.join(', ')}
 - Description: ${prop.description || 'N/A'}
 `;
@@ -161,7 +161,7 @@ Proposed Property Details (already presented to the lead — do NOT re-introduce
   if (!lead.purpose || lead.purpose === 'Any') missingFields.push('purpose (buy/invest)');
 
   const collectedFields = [
-    lead.budget ? `budget = ₹${lead.budget.toLocaleString()}` : null,
+    lead.budget ? `budget = â‚¹${lead.budget.toLocaleString()}` : null,
     lead.location ? `location = ${lead.location}` : null,
     lead.propertyType !== 'Any' ? `property type = ${lead.propertyType}` : null,
     lead.purpose !== 'Any' ? `purpose = ${lead.purpose}` : null,
@@ -181,17 +181,17 @@ ${locationConstraintText}
 === CURRENT LEAD STATE ===
 - Name: ${lead.name}
 - CRM Status: ${lead.status}
-- Budget: ${lead.budget ? '₹' + lead.budget.toLocaleString() : 'Not provided'}
+- Budget: ${lead.budget ? 'â‚¹' + lead.budget.toLocaleString() : 'Not provided'}
 - Preferred Location: ${lead.location || 'Not provided'}
 - Property Type: ${lead.propertyType}
 - Purpose: ${lead.purpose}
 ${propertyContext}
 
-=== ALREADY COLLECTED (CRITICAL — DO NOT ASK AGAIN) ===
+=== ALREADY COLLECTED (CRITICAL â€” DO NOT ASK AGAIN) ===
 ${collectedFields || 'Nothing collected yet.'}
 
 === STILL MISSING (ask ONE at a time in order) ===
-${missingFields.length > 0 ? missingFields.map((f, i) => `${i + 1}. ${f}`).join('\n') : 'All fields collected — proceed to property recommendation and visit scheduling.'}
+${missingFields.length > 0 ? missingFields.map((f, i) => `${i + 1}. ${f}`).join('\n') : 'All fields collected â€” proceed to property recommendation and visit scheduling.'}
 
 === RECENT CONVERSATION (last 10 messages) ===
 ${chatHistorySnippet}
@@ -199,10 +199,10 @@ ${chatHistorySnippet}
 === INSTRUCTIONS FOR THIS TURN ===
 - DO NOT re-ask for any field already listed under "ALREADY COLLECTED".
 - DO NOT repeat the Yes/No site visit question if the lead has already answered it.
-- The lead's current CRM status is "${lead.status}" — your response must be appropriate for this stage.
-- If status is "Slot Pending" and the user hasn't chosen a day yet, only ask them to choose a preferred day (Monday to Sunday) — nothing else.
-- If status is "Slot Pending" and the user has chosen a day (${lead.aiContext?.selectedVisitDay}) but not a period, only ask them to choose Morning, Afternoon, or Evening — nothing else.
-- If status is "Qualified", only ask about site visit interest — nothing else.`;
+- The lead's current CRM status is "${lead.status}" â€” your response must be appropriate for this stage.
+- If status is "Slot Pending" and the user hasn't chosen a day yet, only ask them to choose a preferred day (Monday to Sunday) â€” nothing else.
+- If status is "Slot Pending" and the user has chosen a day (${lead.aiContext?.selectedVisitDay}) but not a period, only ask them to choose Morning, Afternoon, or Evening â€” nothing else.
+- If status is "Qualified", only ask about site visit interest â€” nothing else.`;
 };
 
 export const searchProperties = async (tenantId: string, location?: string) => {
@@ -283,7 +283,7 @@ export const scheduleVisit = async (
       { type: 'text', text: property.title },
       { type: 'text', text: scheduledDate.toLocaleString() },
     ]);
-    await sendEmail(leadId, 'sales-admin@aurahome.com', 'Site Visit Scheduled', msg);
+    await sendEmail(leadId, 'sales-admin@NextLead.com', 'Site Visit Scheduled', msg);
     await sendSMS(leadId, '+15550199', msg);
 
     const io = getIO();
@@ -517,7 +517,7 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
       event: 'Lead Qualified',
       timestamp: new Date(),
       actor: 'AI',
-      details: `Requirements: Budget ₹${lead.budget}, Location: ${lead.location}, Type: ${lead.propertyType}, Purpose: ${lead.purpose}`,
+      details: `Requirements: Budget â‚¹${lead.budget}, Location: ${lead.location}, Type: ${lead.propertyType}, Purpose: ${lead.purpose}`,
     });
 
     const properties = await searchProperties(lead.tenantId);
@@ -525,11 +525,11 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
       const prop = properties[0];
       lead.aiContext = lead.aiContext || {};
       lead.aiContext.proposedPropertyId = prop._id.toString();
-      return `Great news! I found a match: *${prop.title}* at ${prop.location} for ₹${prop.price.toLocaleString()}.\nAmenities: ${prop.amenities.join(', ')}.\nBrochure: ${prop.s3Urls?.brochure || 'http://mock-s3.com/brochure.pdf'}\n\nIf you'd like to visit this property, please share a suitable date and time. I'll help schedule a site visit according to your convenience..`;
+      return `Great news! I found a match: *${prop.title}* at ${prop.location} for â‚¹${prop.price.toLocaleString()}.\nAmenities: ${prop.amenities.join(', ')}.\nBrochure: ${prop.s3Urls?.brochure || 'http://mock-s3.com/brochure.pdf'}\n\nIf you'd like to visit this property, please share a suitable date and time. I'll help schedule a site visit according to your convenience..`;
     }
     lead.aiContext = lead.aiContext || {};
     lead.aiContext.proposedPropertyId = MOCK_PROPERTY_ID;
-    return `Great news! I found a match: *Aura Premium Heights* at Downtown for ₹1.5 Cr.\nAmenities: Gym, Pool.\nBrochure: http://mock-s3.com/brochure.pdf\n\nWould you like to schedule a site visit? Reply with *Yes* or *No*.`;
+    return `Great news! I found a match: *Aura Premium Heights* at Downtown for â‚¹1.5 Cr.\nAmenities: Gym, Pool.\nBrochure: http://mock-s3.com/brochure.pdf\n\nWould you like to schedule a site visit? Reply with *Yes* or *No*.`;
   }
 
   if (lead.status === 'Qualified') {
@@ -637,7 +637,7 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
     const result = await scheduleVisit(lead._id.toString(), propertyId, targetDate.toISOString());
     if (result.success) {
       lead.status = 'Visit Scheduled';
-      return `Your site visit is confirmed for ${lead.aiContext.selectedVisitDay} (${matchedPeriod}) on ${targetDate.toLocaleString()}. We look forward to meeting you! 🏡`;
+      return `Your site visit is confirmed for ${lead.aiContext.selectedVisitDay} (${matchedPeriod}) on ${targetDate.toLocaleString()}. We look forward to meeting you! ðŸ¡`;
     }
     if (result.message === 'Slot already booked. Choose another time slot.') {
       lead.aiContext.selectedVisitPeriod = '';
@@ -660,7 +660,7 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
   }
 
   if (lead.status === 'Booked') {
-    return `Welcome to the AuraHome family! Your booking is confirmed. We will share construction updates and EMI statements here.`;
+    return `Welcome to the NextLead family! Your booking is confirmed. We will share construction updates and EMI statements here.`;
   }
 
   return `Hi ${lead.name}, how can I assist you with your real estate needs today?`;
@@ -917,11 +917,11 @@ export const processIncomingMessage = async (leadId: string, textMessage: string
 
 // --- Deprecated exports kept for backwards compatibility ---
 export const runRuleBasedAssistant = async (lead: any, textMessage: string, io: any, streamEvent: string) => {
-  console.warn('runRuleBasedAssistant is deprecated — use processIncomingMessage');
+  console.warn('runRuleBasedAssistant is deprecated â€” use processIncomingMessage');
   await processIncomingMessage(lead._id.toString(), textMessage);
 };
 
 export const processAIConversation = async (leadId: string, textMessage: string) => {
-  console.warn('processAIConversation is deprecated — use processIncomingMessage');
+  console.warn('processAIConversation is deprecated â€” use processIncomingMessage');
   await processIncomingMessage(leadId, textMessage);
 };

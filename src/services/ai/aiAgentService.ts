@@ -1,4 +1,4 @@
-import Lead, { ILead } from '../../models/Lead';
+﻿import Lead, { ILead } from '../../models/Lead';
 import Property from '../../models/Property';
 import { generateLLMResponse } from './llmProviderService';
 
@@ -24,7 +24,7 @@ Proposed Property Details:
 - ID: ${prop._id}
 - Title: ${prop.title}
 - Location: ${prop.location}
-- Price: ₹${prop.price.toLocaleString()}
+- Price: â‚¹${prop.price.toLocaleString()}
 `;
     }
   }
@@ -105,7 +105,7 @@ If the lead asks to speak to a human, call a representative, or escalate, share 
     console.error('Failed to fetch team contacts for agent prompt:', err);
   }
 
-  const systemInstruction = `You are Aura, the intelligent and Welcoming AI assistant for AuraHome real estate. 
+  const systemInstruction = `You are Aura, the intelligent and Welcoming AI assistant for NextLead real estate. 
 Your primary goal is to qualify leads by collecting their property preferences (budget, location, property type, and intent) and scheduling a site visit.
 
 Follow these strict rules for every response:
@@ -124,7 +124,7 @@ ${locationConstraintText}
 - Lead ID: ${lead._id}
 - Tenant ID: ${lead.tenantId}
 - Current Status: ${lead.status}
-- Budget: ${lead.budget ? '₹' + lead.budget.toLocaleString() : 'Not provided'}
+- Budget: ${lead.budget ? 'â‚¹' + lead.budget.toLocaleString() : 'Not provided'}
 - Preferred Location: ${lead.location || 'Not provided'}
 - Property Type: ${lead.propertyType}
 - Purpose: ${lead.purpose}

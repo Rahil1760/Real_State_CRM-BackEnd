@@ -1,4 +1,4 @@
-import axios from 'axios';
+﻿import axios from 'axios';
 import Fuse from 'fuse.js';
 import Lead from '../../models/Lead';
 import Tenant from '../../models/Tenant';
@@ -250,7 +250,7 @@ export const sendWhatsAppTemplate = async (
   }
 };
 
-export const AURA_SYSTEM_PROMPT = `You are Aura, the intelligent and welcoming AI assistant for AuraHome real estate. 
+export const AURA_SYSTEM_PROMPT = `You are Aura, the intelligent and welcoming AI assistant for NextLead real estate. 
 
 Your primary goal is to qualify leads by collecting their property preferences (budget, location, property type, and intent) and seamlessly scheduling a site visit. 
 
@@ -348,7 +348,7 @@ export const scheduleVisit = async (leadId: string, propertyId: string, dateStr:
       { type: 'text', text: scheduledDate.toLocaleString() },
     ]);
 
-    await sendEmail(leadId, 'sales-admin@aurahome.com', 'Site Visit Scheduled', msg);
+    await sendEmail(leadId, 'sales-admin@NextLead.com', 'Site Visit Scheduled', msg);
     await sendSMS(leadId, '+15550199', msg);
 
     // Socket update
@@ -433,7 +433,7 @@ function buildDefaultSlotDates(): Date[] {
 }
 
 // Best-effort freeform date parser for replies like "Sunday at 4 PM" or
-// "next week". This is intentionally simple — swap in chrono-node or a
+// "next week". This is intentionally simple â€” swap in chrono-node or a
 // similar NLP date library for production-grade parsing of arbitrary phrasing.
 function parseFreeformDate(text: string): Date | null {
   const lower = text.toLowerCase().trim();
@@ -455,7 +455,7 @@ function parseFreeformDate(text: string): Date | null {
   } else if (lower.includes('next week')) {
     targetDate.setDate(now.getDate() + 7);
   } else {
-    // No recognizable day reference — can't safely resolve a date.
+    // No recognizable day reference â€” can't safely resolve a date.
     return null;
   }
 
@@ -529,10 +529,10 @@ export const runRuleBasedAssistant = async (lead: any, textMessage: string, io: 
       const properties = await searchProperties(lead.budget, lead.location, lead.propertyType);
       if (properties.length > 0) {
         const prop = properties[0];
-        aiResponse = `Congratulations! You are now qualified. I found a match: *${prop.title}* at ${prop.location} for ₹${prop.price.toLocaleString()}.\nAmenities: ${prop.amenities.join(', ')}.\nBrochure: ${prop.s3Urls.brochure || 'http://mock-s3.com/brochure.pdf'}\n\nWould you like to schedule a site visit? Reply with **Yes** or **No**.`;
+        aiResponse = `Congratulations! You are now qualified. I found a match: *${prop.title}* at ${prop.location} for â‚¹${prop.price.toLocaleString()}.\nAmenities: ${prop.amenities.join(', ')}.\nBrochure: ${prop.s3Urls.brochure || 'http://mock-s3.com/brochure.pdf'}\n\nWould you like to schedule a site visit? Reply with **Yes** or **No**.`;
         lead.status = 'Qualified'; // Move to Stage 3
       } else {
-        aiResponse = `Thank you for completing your profile! Let me search our inventory for properties in ${lead.location} below ₹${lead.budget.toLocaleString()}. We will get back to you shortly.`;
+        aiResponse = `Thank you for completing your profile! Let me search our inventory for properties in ${lead.location} below â‚¹${lead.budget.toLocaleString()}. We will get back to you shortly.`;
       }
     } else {
       // Re-prompt (max 3 attempts rule)
@@ -605,7 +605,7 @@ export const runRuleBasedAssistant = async (lead: any, textMessage: string, io: 
       aiResponse = `Would you be interested in visiting this property? Please reply with **Yes** or **No**.`;
     }
   } else if (lead.status === 'Slot Pending') {
-    // Stage 4: User is responding to the slot menu — either a number (1/2/3)
+    // Stage 4: User is responding to the slot menu â€” either a number (1/2/3)
     // or a freeform time of their own choosing. Both must be honored (per
     // FLEXIBLE SCHEDULING rule) and must result in an actual scheduleVisit() call.
     const propertyId = lead.aiContext?.proposedPropertyId || 'mock_property_id';
@@ -626,7 +626,7 @@ export const runRuleBasedAssistant = async (lead: any, textMessage: string, io: 
     }
 
     if (!targetDateStr) {
-      // Could not resolve a date from either path — ask again without looping
+      // Could not resolve a date from either path â€” ask again without looping
       // back to the Yes/No question (that was the original bug).
       aiResponse = `Sorry, I couldn't quite catch that. Please reply with **1**, **2**, **3**, or tell me a specific day and time that works for you.`;
     } else {
@@ -651,7 +651,7 @@ export const runRuleBasedAssistant = async (lead: any, textMessage: string, io: 
   } else if (lead.status === 'Ready to Buy') {
     aiResponse = `Excellent! Your booking request has been submitted to our Sales Manager. Once approved, we will send you the document checklist and payment link.`;
   } else if (lead.status === 'Booked') {
-    aiResponse = `Welcome to the AuraHome family! Your booking is confirmed. We will share monthly construction updates and EMI statements here.`;
+    aiResponse = `Welcome to the NextLead family! Your booking is confirmed. We will share monthly construction updates and EMI statements here.`;
   } else {
     // Fallback
     aiResponse = `Hi ${lead.name}, how can I assist you with your real estate needs today?`;
@@ -697,7 +697,7 @@ export const processAIConversation = async (leadId: string, textMessage: string)
 - Name: ${lead.name}
 - Mobile: ${lead.mobile}
 - Current Status: ${lead.status}
-- Budget: ${lead.budget ? '₹' + lead.budget.toLocaleString() : 'Not provided'}
+- Budget: ${lead.budget ? 'â‚¹' + lead.budget.toLocaleString() : 'Not provided'}
 - Preferred Location: ${lead.location || 'Not provided'}
 - Property Type: ${lead.propertyType}
 - Purpose: ${lead.purpose}`;

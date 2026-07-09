@@ -42,13 +42,14 @@ export const initWorkers = () => {
           .filter((location, index, arr) => arr.indexOf(location) === index)
           .join(", ");
 
-        const companyName = await Tenant.find({ _id: lead.tenantId }).select('name');
+        const tenantObj = await Tenant.findById(lead.tenantId).select('name');
+        const companyName = tenantObj ? tenantObj.name : 'our platform';
 
         const greeting = `Hello ${lead.name || "there"}! 👋 Welcome to ${companyName}. I am Kayra, your AI assistant. I'll help you find the perfect property.
 
         🏘️ Currently, we have projects available in: ${availableLocations}.`;
 
-        // const greeting = `Hello ${lead.name || 'there'}! Welcome to AuraHome. I am Kayra your AI assistant. I'll help match you with the perfect property. Could you please share your budget, preferred location, property type (Apartment, Villa, Plot, or Commercial), and whether you are buying or investing?`;
+        // const greeting = `Hello ${lead.name || 'there'}! Welcome to NextLead. I am Kayra your AI assistant. I'll help match you with the perfect property. Could you please share your budget, preferred location, property type (Apartment, Villa, Plot, or Commercial), and whether you are buying or investing?`;
 
         await sendWhatsAppText(lead._id.toString(), lead.mobile, greeting);
       } else if (job.name === 'conversation-turn') {
@@ -129,7 +130,7 @@ export const initWorkers = () => {
         const properties = await searchProperties(lead.tenantId.toString());
         if (properties.length > 0) {
           const prop = properties[0];
-          const text = `Hi ${lead.name}, we found a property match: *${prop.title}* at ${prop.location} for ₹${prop.price.toLocaleString()}.\nBrochure: ${prop.s3Urls.brochure || 'http://mock-s3.com/brochure.pdf'}\nWould you like to schedule a site visit?`;
+          const text = `Hi ${lead.name}, we found a property match: *${prop.title}* at ${prop.location} for â‚¹${prop.price.toLocaleString()}.\nBrochure: ${prop.s3Urls.brochure || 'http://mock-s3.com/brochure.pdf'}\nWould you like to schedule a site visit?`;
           await sendWhatsAppText(lead._id.toString(), lead.mobile, text);
         }
       }
@@ -198,7 +199,7 @@ export const initWorkers = () => {
 
         const tenant = await Tenant.findById(tenantId);
         const welcomeTemplate = tenant?.whatsappWelcomeTemplateName || 'lead_welcome_v1';
-        const senderName = tenant?.senderDisplayName || tenant?.name || 'AuraHome';
+        const senderName = tenant?.senderDisplayName || tenant?.name || 'NextLead';
 
         for (let i = 0; i < dataRows.length; i++) {
           const row = dataRows[i];

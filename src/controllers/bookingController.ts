@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+﻿import { Request, Response } from 'express';
 import { TenantRequest } from '../middleware/tenant';
 import Booking from '../models/Booking';
 import Lead from '../models/Lead';
@@ -57,7 +57,7 @@ export const createBookingRequest = async (req: TenantRequest, res: Response) =>
       event: 'Booking Requested',
       timestamp: new Date(),
       actor: (req as any).user?.role || 'Sales Executive',
-      details: `Raised purchase request of ₹${amount.toLocaleString()} for property.`,
+      details: `Raised purchase request of â‚¹${amount.toLocaleString()} for property.`,
     });
     await lead.save();
 
@@ -98,18 +98,18 @@ export const approveBooking = async (req: TenantRequest, res: Response) => {
       event: 'Booking Approved & Paid (Cash)',
       timestamp: new Date(),
       actor: 'Sales Manager',
-      details: `Booking approved and recorded as Cash Payment of ₹${booking.amount.toLocaleString()}. Lead status set to Booked.`,
+      details: `Booking approved and recorded as Cash Payment of â‚¹${booking.amount.toLocaleString()}. Lead status set to Booked.`,
     });
     await lead.save();
 
-    const checklistText = `Hello ${lead.name}, your booking request for *${property.title}* has been approved and recorded as cash payment! Welcome to the AuraHome family!\n\n📋 *Document Checklist needed:* \n1. PAN Card copy\n2. Aadhaar Card copy\n3. 3 months salary slips / tax returns\n4. Passport size photo.`;
+    const checklistText = `Hello ${lead.name}, your booking request for *${property.title}* has been approved and recorded as cash payment! Welcome to the NextLead family!\n\nðŸ“‹ *Document Checklist needed:* \n1. PAN Card copy\n2. Aadhaar Card copy\n3. 3 months salary slips / tax returns\n4. Passport size photo.`;
     await sendWhatsAppText(lead._id.toString(), lead.mobile, checklistText);
 
     await sendEmail(
       lead._id.toString(),
-      lead.email || 'customer@aurahome.com',
-      'Booking Confirmed (Cash Payment Received) - AuraHome',
-      `Dear ${lead.name},\n\nYour purchase booking for ${property.title} has been approved and confirmed. We have successfully registered your cash token payment of ₹${booking.amount.toLocaleString()}.`
+      lead.email || 'customer@NextLead.com',
+      'Booking Confirmed (Cash Payment Received) - NextLead',
+      `Dear ${lead.name},\n\nYour purchase booking for ${property.title} has been approved and confirmed. We have successfully registered your cash token payment of â‚¹${booking.amount.toLocaleString()}.`
     );
 
     const io = getIO();
@@ -163,11 +163,11 @@ export const paymentWebhook = async (req: Request, res: Response) => {
         event: 'Booking Payment Successful',
         timestamp: new Date(),
         actor: 'System',
-        details: `Confirmed Payment ID: ${paymentId}. Amount: ₹${booking.amount.toLocaleString()}. Lead status set to Booked.`,
+        details: `Confirmed Payment ID: ${paymentId}. Amount: â‚¹${booking.amount.toLocaleString()}. Lead status set to Booked.`,
       });
       await lead.save();
 
-      const text = `Welcome to AuraHome, ${lead.name}! 🏠 Your booking is officially confirmed. We will keep you updated on construction updates here.`;
+      const text = `Welcome to NextLead, ${lead.name}! ðŸ  Your booking is officially confirmed. We will keep you updated on construction updates here.`;
       await sendWhatsAppText(lead._id.toString(), lead.mobile, text);
 
       // Trigger drip welcome
@@ -176,7 +176,7 @@ export const paymentWebhook = async (req: Request, res: Response) => {
         await emailQueue.add('welcome-drip', {
           leadId: lead._id,
           to: lead.email,
-          subject: 'Welcome to the AuraHome Family!',
+          subject: 'Welcome to the NextLead Family!',
           text: `Hi ${lead.name},\n\nCongratulations on your property purchase. We have received your booking token payment.\n\nYour referral code is: REF-${lead._id.toString().substring(18)}.`
         });
       }

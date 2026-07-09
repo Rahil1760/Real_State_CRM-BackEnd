@@ -1,4 +1,5 @@
 import mongoose, { Schema, Document } from 'mongoose';
+import { encrypt, decrypt } from '../services/tenant/crypto';
 
 export interface ITenant extends Document {
   name: string;
@@ -60,8 +61,16 @@ const TenantSchema: Schema = new Schema(
     maxLeads: { type: Number, default: 50 },
     maxUsers: { type: Number, default: 2 },
     maxProperties: { type: Number, default: 5 },
-    whatsappPhoneId: { type: String },
-    whatsappToken: { type: String },
+    whatsappPhoneId: { 
+      type: String,
+      get: (val: string) => val ? decrypt(val) : val,
+      set: (val: string) => val ? encrypt(val) : val
+    },
+    whatsappToken: { 
+      type: String,
+      get: (val: string) => val ? decrypt(val) : val,
+      set: (val: string) => val ? encrypt(val) : val
+    },
     razorpayKeyId: { type: String },
     razorpaySecret: { type: String },
     whatsappWelcomeTemplateName: { type: String, default: 'lead_welcome_v1' },
@@ -73,7 +82,11 @@ const TenantSchema: Schema = new Schema(
       other: { type: Number, default: 0 },
     },
   },
-  { timestamps: true }
+  { 
+    timestamps: true,
+    toJSON: { getters: true },
+    toObject: { getters: true }
+  }
 );
 
 export default mongoose.model<ITenant>('Tenant', TenantSchema);

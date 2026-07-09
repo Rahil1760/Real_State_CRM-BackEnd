@@ -4,8 +4,19 @@ import Lead from '../models/Lead';
 import User from '../models/User';
 import Invoice from '../models/Invoice';
 import jwt from 'jsonwebtoken';
+import Redis from 'ioredis';
+import { getConnection } from '../services/queue/queueConfig';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_12345';
+
+let redisClient: Redis | null = null;
+const getRedis = () => {
+  if (!redisClient) {
+    const opts = getConnection();
+    redisClient = new Redis(opts);
+  }
+  return redisClient;
+};
 
 export const getTenants = async (req: Request, res: Response) => {
     try {
@@ -98,6 +109,19 @@ export const planOverride = async (req: Request, res: Response) => {
         }
 
         await tenant.save();
+
+        // Invalidate Redis cache
+        try {
+            const redis = getRedis();
+            const tenantIdStr = tenant._id.toString();
+            const slugStr = tenant.slug || '';
+            await redis.del(`tenant:id:${tenantIdStr}`);
+            if (slugStr) {
+                await redis.del(`tenant:slug:${slugStr}`);
+            }
+        } catch (cacheErr) {
+            console.error('Error clearing tenant cache:', cacheErr);
+        }
 
         return res.status(200).json({ message: 'Plan limits overridden successfully', tenant });
     } catch (error: any) {
