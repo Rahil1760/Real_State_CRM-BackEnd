@@ -10,6 +10,7 @@ import { sendEmail, sendSMS } from '../notificationService';
 import { getQueue } from '../queue/queueConfig';
 import { checkFaqCache } from './semanticCache';
 import { analyzeFeedbackSentiment } from './llmProviderService';
+import User from '../../models/User';
 
 const MOCK_PROPERTY_ID = '507f1f77bcf86cd799439011';
 
@@ -283,8 +284,9 @@ export const scheduleVisit = async (
       { type: 'text', text: property.title },
       { type: 'text', text: scheduledDate.toLocaleString() },
     ]);
-    await sendEmail(leadId, 'sales-admin@NextLead.com', 'Site Visit Scheduled', msg);
-    await sendSMS(leadId, '+15550199', msg);
+    const adminGmail = await User.findOne({ tenantId: lead.tenantId, role: 'admin' }).select('email');
+    await sendEmail(leadId, adminGmail?.email || "", 'Site Visit Scheduled', msg);
+    // await sendSMS(leadId, lead.mobile || "", msg);
 
     const io = getIO();
     if (io) {

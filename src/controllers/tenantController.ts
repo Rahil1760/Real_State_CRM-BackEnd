@@ -67,7 +67,7 @@ export const registerTenant = async (req: Request, res: Response) => {
       null,
       email,
       'Welcome to NextLead SaaS Platform!',
-      `Dear ${name},\n\nThank you for choosing NextLead for your company: ${companyName}.\n\nYour subdomain slug is: ${cleanSlug}. You can log in using: admin@example.com / ${email}.\n\nYour 14-day free trial is active with limits: 50 leads, 2 team users, and 5 properties.\n\nBest,\nThe NextLead team`
+      `Dear ${name},\n\nThank you for choosing NextLead for your company: ${companyName}.\n\nYour subdomain slug is: ${cleanSlug}. You can log in using: ${email.toLowerCase()}.\n\nYour 14-day free trial is active with limits: 50 leads, 2 team users, and 5 properties.\n\nBest,\nThe NextLead team`
     );
 
     return res.status(201).json({

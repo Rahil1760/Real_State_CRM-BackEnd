@@ -1,17 +1,22 @@
-﻿import nodemailer from 'nodemailer';
+import nodemailer from 'nodemailer';
 import Notification from '../models/Notification';
 import Lead from '../models/Lead';
 import Tenant from '../models/Tenant';
 import { getIO } from './socket/socketService';
 
 // SMTP Configuration
+const smtpPort = Number(process.env.SMTP_PORT) || 2525;
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'smtp.mailtrap.io',
-  port: Number(process.env.SMTP_PORT) || 2525,
+  port: smtpPort,
+  secure: smtpPort === 465, // true for 465, false for other ports
   auth: {
     user: process.env.SMTP_USER || 'mock_smtp_user',
     pass: process.env.SMTP_PASS || 'mock_smtp_pass',
   },
+  tls: {
+    rejectUnauthorized: false
+  }
 });
 
 export const sendEmail = async (leadId: string | null, to: string, subject: string, text: string): Promise<boolean> => {
@@ -56,7 +61,7 @@ export const sendEmail = async (leadId: string | null, to: string, subject: stri
     // Try real send (fallback if user details are mock)
     if (process.env.SMTP_USER && !process.env.SMTP_USER.startsWith('mock')) {
       await transporter.sendMail({
-        from: '"NextLead CRM" <no-reply@NextLead.com>',
+        from: `"AuraHome CRM" <${process.env.SMTP_USER}>`,
         to,
         subject,
         text,

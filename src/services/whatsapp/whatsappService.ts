@@ -347,8 +347,8 @@ export const scheduleVisit = async (leadId: string, propertyId: string, dateStr:
       { type: 'text', text: property.title },
       { type: 'text', text: scheduledDate.toLocaleString() },
     ]);
-
-    await sendEmail(leadId, 'sales-admin@NextLead.com', 'Site Visit Scheduled', msg);
+    const adminGmail =
+      await sendEmail(leadId, 'sales-admin@NextLead.com', 'Site Visit Scheduled', msg);
     await sendSMS(leadId, '+15550199', msg);
 
     // Socket update
