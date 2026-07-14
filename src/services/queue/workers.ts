@@ -14,7 +14,7 @@ import * as XLSX from 'xlsx';
 import pdfParse from 'pdf-parse';
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
 import { processAIConversation, searchProperties, scoreLeadPostVisit } from '../ai/aiService';
-import { sendWhatsAppText, sendWhatsAppTemplate } from '../whatsapp/whatsappService';
+import { sendWhatsAppText, sendWhatsAppTemplate, sendWhatsAppDocument } from '../whatsapp/whatsappService';
 import { sendEmail, sendSMS } from '../notificationService';
 import { getIO } from '../socket/socketService';
 import { generateQueryEmbedding } from '../ai/aiTools';
@@ -130,8 +130,27 @@ export const initWorkers = () => {
         const properties = await searchProperties(lead.tenantId.toString());
         if (properties.length > 0) {
           const prop = properties[0];
-          const text = `Hi ${lead.name}, we found a property match: *${prop.title}* at ${prop.location} for â‚¹${prop.price.toLocaleString()}.\nBrochure: ${prop.s3Urls.brochure || 'http://mock-s3.com/brochure.pdf'}\nWould you like to schedule a site visit?`;
+          const getBaseUrl = () => {
+            const envUrl = process.env.VITE_BASE_URL || process.env.BACKEND_URL;
+            return envUrl ? envUrl.replace(/\/api\/?$/, '') : `http://localhost:${process.env.PORT || 5000}`;
+          };
+          const brochureUrl = prop.s3Urls?.brochure 
+            ? (prop.s3Urls.brochure.startsWith('/') 
+                ? `${getBaseUrl()}${prop.s3Urls.brochure}` 
+                : prop.s3Urls.brochure)
+            : null;
+          const text = `Hi ${lead.name}, we found a property match: *${prop.title}* at ${prop.location} for \u20b9${prop.price.toLocaleString()}.\nWould you like to schedule a site visit?`;
           await sendWhatsAppText(lead._id.toString(), lead.mobile, text);
+
+          if (brochureUrl) {
+            await sendWhatsAppDocument(
+              lead._id.toString(),
+              lead.mobile,
+              brochureUrl,
+              `${prop.title.replace(/\s+/g, '_')}_Brochure.pdf`,
+              `Brochure for ${prop.title}`
+            );
+          }
         }
       }
     },

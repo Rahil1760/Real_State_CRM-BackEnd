@@ -1,4 +1,4 @@
-﻿import axios from 'axios';
+import axios from 'axios';
 import Fuse from 'fuse.js';
 import Lead from '../../models/Lead';
 import Tenant from '../../models/Tenant';
@@ -246,6 +246,128 @@ export const sendWhatsAppTemplate = async (
     return true;
   } catch (error: any) {
     console.error('Error sending WhatsApp template:', error.response?.data || error.message);
+    return false;
+  }
+};
+
+export const sendWhatsAppDocument = async (
+  leadId: string, 
+  to: string, 
+  documentUrl: string, 
+  filename: string, 
+  caption?: string,
+  tenantIdOverride?: string
+): Promise<boolean> => {
+  try {
+    console.log(`[WhatsApp Document Dispatch] Outbox -> To: ${to}, URL: ${documentUrl}`);
+
+    // Fetch Lead to get tenantId
+    const lead = leadId ? await Lead.findById(leadId) : null;
+    let tenantId = tenantIdOverride || lead?.tenantId;
+    let tenant = null;
+
+    if (tenantId) {
+      tenant = await Tenant.findById(tenantId);
+    } else {
+      tenant = await Tenant.findOne({});
+      if (tenant) {
+        tenantId = tenant._id as any;
+      }
+    }
+
+    const whatsappToken = tenant?.whatsappToken || process.env.WHATSAPP_TOKEN;
+    const whatsappPhoneId = tenant?.whatsappPhoneId || process.env.WHATSAPP_PHONE_ID;
+    const apiUrl = `https://graph.facebook.com/v18.0/${whatsappPhoneId}/messages`;
+
+    // Log to DB
+    const logMessage = `Sent Document: ${filename} (${documentUrl})${caption ? ` - "${caption}"` : ''}`;
+    const notification = new Notification({
+      tenantId,
+      leadId,
+      channel: 'WhatsApp',
+      message: logMessage,
+      status: 'Sent',
+      sentAt: new Date(),
+    });
+    await notification.save();
+
+    // Update Lead timeline and store chat turn
+    if (lead) {
+      lead.timeline.push({
+        event: 'WhatsApp Document Sent',
+        timestamp: new Date(),
+        actor: 'AI',
+        details: logMessage,
+      });
+      lead.chatHistory.push({ role: 'model', text: logMessage });
+      lead.aiContext.chatHistory = (lead.aiContext.chatHistory || '') + `\nAgent sent document: ${filename}`;
+      await lead.save();
+
+      // Dispatch to UI via Socket.io
+      const io = getIO();
+      if (io) {
+        io.to('/crm').emit('lead:updated', lead);
+        io.to('/crm').emit('notification:sent', {
+          leadId,
+          channel: 'WhatsApp',
+          message: logMessage,
+          timestamp: new Date(),
+        });
+      }
+    }
+
+    // Attempt real dispatch if API keys exist
+    if (whatsappToken && whatsappPhoneId && !whatsappToken.startsWith('mock')) {
+      await axios.post(
+        apiUrl,
+        {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to,
+          type: 'document',
+          document: {
+            link: documentUrl,
+            filename,
+            ...(caption ? { caption } : {}),
+          },
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${whatsappToken}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+      return true;
+    }
+
+    return true;
+  } catch (error: any) {
+    console.error('Error sending WhatsApp document:', error.response?.data || error.message);
+    
+    // Resolve tenantId
+    let tenantId;
+    try {
+      const lead = await Lead.findById(leadId);
+      tenantId = lead?.tenantId;
+    } catch (e) { }
+
+    if (!tenantId) {
+      const defaultTenant = await Tenant.findOne({});
+      if (defaultTenant) {
+        tenantId = defaultTenant._id;
+      }
+    }
+
+    // Log failure
+    await Notification.create({
+      tenantId,
+      leadId,
+      channel: 'WhatsApp',
+      message: `Failed sending document: ${filename}`,
+      status: 'Failed',
+      sentAt: new Date(),
+    });
     return false;
   }
 };
@@ -529,8 +651,29 @@ export const runRuleBasedAssistant = async (lead: any, textMessage: string, io: 
       const properties = await searchProperties(lead.budget, lead.location, lead.propertyType);
       if (properties.length > 0) {
         const prop = properties[0];
-        aiResponse = `Congratulations! You are now qualified. I found a match: *${prop.title}* at ${prop.location} for â‚¹${prop.price.toLocaleString()}.\nAmenities: ${prop.amenities.join(', ')}.\nBrochure: ${prop.s3Urls.brochure || 'http://mock-s3.com/brochure.pdf'}\n\nWould you like to schedule a site visit? Reply with **Yes** or **No**.`;
+        const getBaseUrl = () => {
+          const envUrl = process.env.VITE_BASE_URL || process.env.BACKEND_URL;
+          return envUrl ? envUrl.replace(/\/api\/?$/, '') : `http://localhost:${process.env.PORT || 5000}`;
+        };
+        const brochureUrl = prop.s3Urls?.brochure 
+          ? (prop.s3Urls.brochure.startsWith('/') 
+              ? `${getBaseUrl()}${prop.s3Urls.brochure}` 
+              : prop.s3Urls.brochure)
+          : null;
+        aiResponse = `Congratulations! You are now qualified. I found a match: *${prop.title}* at ${prop.location} for \u20b9${prop.price.toLocaleString()}.\nAmenities: ${prop.amenities.join(', ')}.\n\nWould you like to schedule a site visit? Reply with **Yes** or **No**.`;
         lead.status = 'Qualified'; // Move to Stage 3
+
+        if (brochureUrl) {
+          setTimeout(async () => {
+            await sendWhatsAppDocument(
+              lead._id.toString(),
+              lead.mobile,
+              brochureUrl,
+              `${prop.title.replace(/\s+/g, '_')}_Brochure.pdf`,
+              `Brochure for ${prop.title}`
+            );
+          }, 3000);
+        }
       } else {
         aiResponse = `Thank you for completing your profile! Let me search our inventory for properties in ${lead.location} below â‚¹${lead.budget.toLocaleString()}. We will get back to you shortly.`;
       }

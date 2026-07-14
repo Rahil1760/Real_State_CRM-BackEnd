@@ -2,6 +2,8 @@ import { Response } from 'express';
 import { TenantRequest } from '../middleware/tenant';
 import Property from '../models/Property';
 import BaseRepository from '../repositories/BaseRepository';
+import fs from 'fs';
+import path from 'path';
 
 const propertyRepository = new BaseRepository(Property);
 
@@ -130,6 +132,81 @@ export const deleteProperty = async (req: TenantRequest, res: Response) => {
       return res.status(404).json({ message: 'Property not found' });
     }
     return res.status(200).json({ message: 'Property deleted successfully' });
+  } catch (error: any) {
+    return res.status(500).json({ message: error.message || 'Internal server error' });
+  }
+};
+
+export const uploadBrochure = async (req: TenantRequest, res: Response) => {
+  try {
+    const tenantId = req.tenant?._id;
+    if (!tenantId) return res.status(400).json({ message: 'Tenant context missing' });
+
+    const { id } = req.params;
+    const property = await Property.findOne({ _id: id, tenantId });
+    if (!property) {
+      return res.status(404).json({ message: 'Property not found' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ message: 'No brochure file uploaded.' });
+    }
+
+    const originalName = req.file.originalname;
+    const ext = path.extname(originalName).toLowerCase();
+    if (ext !== '.pdf') {
+      return res.status(400).json({ message: 'Only PDF documents are supported for brochures.' });
+    }
+
+    const docDir = path.join(__dirname, '../../uploads/documents', String(tenantId), String(id));
+    if (!fs.existsSync(docDir)) {
+      fs.mkdirSync(docDir, { recursive: true });
+    }
+
+    const uniqueFileName = `${Date.now()}_${originalName.replace(/\s+/g, '_')}`;
+    const filePath = path.join(docDir, uniqueFileName);
+    fs.writeFileSync(filePath, req.file.buffer);
+
+    const relativeUrl = `/uploads/documents/${tenantId}/${id}/${uniqueFileName}`;
+    const brochureUrl = process.env.AWS_S3_BUCKET 
+      ? `https://${process.env.AWS_S3_BUCKET}.s3.amazonaws.com/uploads/${tenantId}/${id}/${uniqueFileName}`
+      : relativeUrl;
+
+    property.s3Urls = {
+      ...property.s3Urls,
+      brochure: brochureUrl,
+    };
+
+    await property.save();
+    return res.status(200).json(property);
+  } catch (error: any) {
+    return res.status(500).json({ message: error.message || 'Internal server error' });
+  }
+};
+
+export const deleteBrochure = async (req: TenantRequest, res: Response) => {
+  try {
+    const tenantId = req.tenant?._id;
+    if (!tenantId) return res.status(400).json({ message: 'Tenant context missing' });
+
+    const { id } = req.params;
+    const property = await Property.findOne({ _id: id, tenantId });
+    if (!property) {
+      return res.status(404).json({ message: 'Property not found' });
+    }
+
+    if (property.s3Urls?.brochure) {
+      if (property.s3Urls.brochure.startsWith('/uploads/')) {
+        const filePath = path.join(__dirname, '../..', property.s3Urls.brochure);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      }
+      property.s3Urls.brochure = '';
+      await property.save();
+    }
+
+    return res.status(200).json(property);
   } catch (error: any) {
     return res.status(500).json({ message: error.message || 'Internal server error' });
   }

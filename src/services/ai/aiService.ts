@@ -1,10 +1,10 @@
-﻿import mongoose from 'mongoose';
+import mongoose from 'mongoose';
 import Fuse from 'fuse.js';
 import Lead, { ILead } from '../../models/Lead';
 import Property from '../../models/Property';
 import Visit from '../../models/Visit';
 import Booking from '../../models/Booking';
-import { sendWhatsAppText, sendWhatsAppTemplate } from '../whatsapp/whatsappService';
+import { sendWhatsAppText, sendWhatsAppTemplate, sendWhatsAppDocument } from '../whatsapp/whatsappService';
 import { getIO } from '../socket/socketService';
 import { sendEmail, sendSMS } from '../notificationService';
 import { getQueue } from '../queue/queueConfig';
@@ -527,7 +527,29 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
       const prop = properties[0];
       lead.aiContext = lead.aiContext || {};
       lead.aiContext.proposedPropertyId = prop._id.toString();
-      return `Great news! I found a match: *${prop.title}* at ${prop.location} for â‚¹${prop.price.toLocaleString()}.\nAmenities: ${prop.amenities.join(', ')}.\nBrochure: ${prop.s3Urls?.brochure || 'http://mock-s3.com/brochure.pdf'}\n\nIf you'd like to visit this property, please share a suitable date and time. I'll help schedule a site visit according to your convenience..`;
+      const getBaseUrl = () => {
+        const envUrl = process.env.VITE_BASE_URL || process.env.BACKEND_URL;
+        return envUrl ? envUrl.replace(/\/api\/?$/, '') : `http://localhost:${process.env.PORT || 5000}`;
+      };
+      const brochureUrl = prop.s3Urls?.brochure 
+        ? (prop.s3Urls.brochure.startsWith('/') 
+            ? `${getBaseUrl()}${prop.s3Urls.brochure}` 
+            : prop.s3Urls.brochure)
+        : null;
+
+      if (brochureUrl) {
+        setTimeout(async () => {
+          await sendWhatsAppDocument(
+            lead._id.toString(),
+            lead.mobile,
+            brochureUrl,
+            `${prop.title.replace(/\s+/g, '_')}_Brochure.pdf`,
+            `Brochure for ${prop.title}`
+          );
+        }, 1000);
+      }
+
+      return `Great news! I found a match: *${prop.title}* at ${prop.location} for \u20b9${prop.price.toLocaleString()}.\nAmenities: ${prop.amenities.join(', ')}.\n\nIf you'd like to visit this property, please share a suitable date and time. I'll help schedule a site visit according to your convenience.`;
     }
     lead.aiContext = lead.aiContext || {};
     lead.aiContext.proposedPropertyId = MOCK_PROPERTY_ID;
