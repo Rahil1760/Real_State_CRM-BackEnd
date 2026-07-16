@@ -199,11 +199,31 @@ export const receiveWhatsApp = async (req: Request, res: Response) => {
     // Resolve tenantId
     let tenantId = (req.query.tenantId as string) || (req.headers['x-tenant-id'] as string);
 
+    // Try resolving by phone number ID from Meta metadata
+    const phone_number_id = value.metadata?.phone_number_id;
+    if (!tenantId && phone_number_id) {
+      const matchingTenant = await Tenant.findOne({ whatsappPhoneId: phone_number_id });
+      if (matchingTenant) {
+        tenantId = matchingTenant._id.toString();
+        console.log(`[WhatsApp Webhook] Resolved tenantId (${tenantId}) from phone_number_id: ${phone_number_id}`);
+      }
+    }
+
+    // Try resolving by existing lead mobile number
     if (!tenantId) {
-      // Fallback: use first available tenant in DB for developer testing/simulations
+      const existingLead = await Lead.findOne({ mobile: cleanFrom }).sort({ updatedAt: -1 });
+      if (existingLead) {
+        tenantId = existingLead.tenantId.toString();
+        console.log(`[WhatsApp Webhook] Resolved tenantId (${tenantId}) from existing lead mobile: ${cleanFrom}`);
+      }
+    }
+
+    // Fallback: use first available tenant in DB
+    if (!tenantId) {
       const defaultTenant = await Tenant.findOne({});
       if (defaultTenant) {
         tenantId = defaultTenant._id.toString();
+        console.log(`[WhatsApp Webhook] Falling back to default tenantId: ${tenantId}`);
       }
     }
 
@@ -250,6 +270,15 @@ export const receiveWhatsApp = async (req: Request, res: Response) => {
       if (io) {
         io.to('/crm').emit('lead:new', lead);
       }
+    }
+
+    // Save incoming message to Lead chat history immediately
+    lead.chatHistory.push({ role: 'user', text: textBody });
+    await lead.save();
+
+    const io = getIO();
+    if (io) {
+      io.to('/crm').emit('lead:updated', lead);
     }
 
     // Trigger dynamic AI conversation chain via BullMQ

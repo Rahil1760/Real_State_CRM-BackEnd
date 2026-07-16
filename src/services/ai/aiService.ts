@@ -876,20 +876,22 @@ export const processIncomingMessage = async (leadId: string, textMessage: string
       const firstName = lead.name ? lead.name.split(' ')[0] : '';
       aiResponse = firstName ? `Hi ${firstName}, ${cacheResult.answer}` : cacheResult.answer;
 
+      const history = lead.chatHistory || [];
+      const lastMsg = history[history.length - 1];
+      const itemsToPush: any[] = [];
+      if (!lastMsg || lastMsg.role !== 'user' || lastMsg.text !== textMessage) {
+        itemsToPush.push({ role: 'user', text: textMessage });
+      }
+      itemsToPush.push({ role: 'model', text: aiResponse });
+
       if (lead.status !== 'Visit Scheduled') {
-        lead.chatHistory.push(
-          { role: 'user', text: textMessage },
-          { role: 'model', text: aiResponse },
-        );
+        lead.chatHistory.push(...itemsToPush);
         await lead.save();
       } else {
         await Lead.findByIdAndUpdate(leadId, {
           $push: {
             chatHistory: {
-              $each: [
-                { role: 'user', text: textMessage },
-                { role: 'model', text: aiResponse },
-              ],
+              $each: itemsToPush,
             },
           },
         });
@@ -916,20 +918,22 @@ export const processIncomingMessage = async (leadId: string, textMessage: string
     aiResponse = await polishWithAI(lead, baseResponse);
   }
 
+  const history = lead.chatHistory || [];
+  const lastMsg = history[history.length - 1];
+  const itemsToPush: any[] = [];
+  if (!lastMsg || lastMsg.role !== 'user' || lastMsg.text !== textMessage) {
+    itemsToPush.push({ role: 'user', text: textMessage });
+  }
+  itemsToPush.push({ role: 'model', text: aiResponse });
+
   if (lead.status !== 'Visit Scheduled') {
-    lead.chatHistory.push(
-      { role: 'user', text: textMessage },
-      { role: 'model', text: aiResponse },
-    );
+    lead.chatHistory.push(...itemsToPush);
     await lead.save();
   } else {
     await Lead.findByIdAndUpdate(leadId, {
       $push: {
         chatHistory: {
-          $each: [
-            { role: 'user', text: textMessage },
-            { role: 'model', text: aiResponse },
-          ],
+          $each: itemsToPush,
         },
       },
     });
