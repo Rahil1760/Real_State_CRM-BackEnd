@@ -12,12 +12,13 @@ import { getQueue } from '../queue/queueConfig';
 import { analyzeFeedbackSentiment } from '../ai/llmProviderService';
 
 export const sendWhatsAppText = async (leadId: string, to: string, text: string, skipHistoryLog: boolean = false, tenantIdOverride?: string): Promise<boolean> => {
+  let tenantId: any = null;
   try {
     console.log(`[WhatsApp Dispatch] Outbox -> To: ${to}, Message: "${text}"`);
 
     // Fetch Lead to get tenantId
     const lead = leadId ? await Lead.findById(leadId) : null;
-    let tenantId = tenantIdOverride || lead?.tenantId;
+    tenantId = tenantIdOverride || lead?.tenantId;
     let tenant = null;
 
     if (tenantId) {
@@ -33,56 +34,16 @@ export const sendWhatsAppText = async (leadId: string, to: string, text: string,
     const whatsappPhoneId = tenant?.whatsappPhoneId || process.env.WHATSAPP_PHONE_ID;
     const apiUrl = `https://graph.facebook.com/v18.0/${whatsappPhoneId}/messages`;
 
-    // Log to DB
-    const notification = new Notification({
-      tenantId,
-      leadId,
-      channel: 'WhatsApp',
-      message: text,
-      status: 'Sent',
-      sentAt: new Date(),
-    });
-    await notification.save();
+    const isMock = !whatsappToken || !whatsappPhoneId || whatsappToken.startsWith('mock');
 
-    // Update Lead timeline and store chat turn
-    if (lead) {
-      lead.timeline.push({
-        event: 'WhatsApp Sent',
-        timestamp: new Date(),
-        actor: 'AI',
-        details: text,
-      });
-      // Append message to chat log
-      if (!skipHistoryLog) {
-        lead.chatHistory.push({ role: 'model', text });
-        lead.aiContext.chatHistory = (lead.aiContext.chatHistory || '') + `\nAgent: ${text}`;
-      }
-      await lead.save();
+    if (!isMock) {
+      console.log("========== WHATSAPP DEBUG ==========");
+      console.log("Phone ID:", whatsappPhoneId);
+      console.log("Token:", whatsappToken?.substring(0, 20) + "...");
+      console.log("API URL:", apiUrl);
+      console.log("To:", to);
+      console.log("====================================");
 
-      // Dispatch to UI via Socket.io
-      const io = getIO();
-      if (io) {
-        io.to('/crm').emit('lead:updated', lead);
-        io.to('/crm').emit('notification:sent', {
-          leadId,
-          channel: 'WhatsApp',
-          message: text,
-          timestamp: new Date(),
-        });
-      }
-    }
-
-    //
-    console.log("========== WHATSAPP DEBUG ==========");
-    console.log("Phone ID:", whatsappPhoneId);
-    console.log("Token:", whatsappToken?.substring(0, 20) + "...");
-    console.log("API URL:", apiUrl);
-    console.log("To:", to);
-    console.log("====================================");
-    //
-
-    // Attempt real dispatch if API keys exist
-    if (whatsappToken && whatsappPhoneId && !whatsappToken.startsWith('mock')) {
       await axios.post(
         apiUrl,
         {
@@ -99,20 +60,74 @@ export const sendWhatsAppText = async (leadId: string, to: string, text: string,
           },
         }
       );
-      return true;
     }
 
+    // ON SUCCESS (real API post succeeded, or mock mode)
+    const notification = new Notification({
+      tenantId,
+      leadId,
+      channel: 'WhatsApp',
+      message: text,
+      status: 'Sent',
+      sentAt: new Date(),
+    });
+    await notification.save();
+
+    if (lead) {
+      lead.timeline.push({
+        event: 'WhatsApp Sent',
+        timestamp: new Date(),
+        actor: 'AI',
+        details: text,
+      });
+      if (!skipHistoryLog) {
+        lead.chatHistory.push({ role: 'model', text });
+        lead.aiContext.chatHistory = (lead.aiContext.chatHistory || '') + `\nAgent: ${text}`;
+      }
+      await lead.save();
+
+      const io = getIO();
+      if (io) {
+        io.to('/crm').emit('lead:updated', lead);
+        io.to('/crm').emit('notification:sent', {
+          leadId,
+          channel: 'WhatsApp',
+          message: text,
+          timestamp: new Date(),
+        });
+        io.to('/crm').emit('whatsapp:message', {
+          leadId,
+          direction: 'outbound',
+          channel: 'WhatsApp',
+          status: 'sent',
+          text,
+          timestamp: new Date(),
+        });
+      }
+    } else {
+      const io = getIO();
+      if (io) {
+        io.to('/crm').emit('whatsapp:message', {
+          leadId,
+          direction: 'outbound',
+          channel: 'WhatsApp',
+          status: 'sent',
+          text,
+          timestamp: new Date(),
+        });
+      }
+    }
 
     return true;
   } catch (error: any) {
     console.error('Error sending WhatsApp message:', error.response?.data || error.message);
 
-    // Resolve tenantId
-    let tenantId;
-    try {
-      const lead = await Lead.findById(leadId);
-      tenantId = lead?.tenantId;
-    } catch (e) { }
+    if (!tenantId) {
+      try {
+        const lead = await Lead.findById(leadId);
+        tenantId = lead?.tenantId;
+      } catch (e) { }
+    }
 
     if (!tenantId) {
       const defaultTenant = await Tenant.findOne({});
@@ -121,7 +136,6 @@ export const sendWhatsAppText = async (leadId: string, to: string, text: string,
       }
     }
 
-    // Log failure
     await Notification.create({
       tenantId,
       leadId,
@@ -130,6 +144,19 @@ export const sendWhatsAppText = async (leadId: string, to: string, text: string,
       status: 'Failed',
       sentAt: new Date(),
     });
+
+    const io = getIO();
+    if (io) {
+      io.to('/crm').emit('whatsapp:message', {
+        leadId,
+        direction: 'outbound',
+        channel: 'WhatsApp',
+        status: 'failed',
+        text,
+        timestamp: new Date(),
+      });
+    }
+
     return false;
   }
 };
@@ -140,6 +167,7 @@ export const sendWhatsAppTemplate = async (
   templateName: string,
   parameters: Array<{ type: string; text?: string; image?: { link: string }; document?: { link: string; filename: string } }> = []
 ): Promise<boolean> => {
+  let tenantId: any = null;
   try {
     let textSummary = `Sent Template: ${templateName}`;
     if (parameters.length > 0) {
@@ -151,7 +179,7 @@ export const sendWhatsAppTemplate = async (
 
     // Fetch Lead to get tenantId
     const lead = await Lead.findById(leadId);
-    let tenantId = lead?.tenantId;
+    tenantId = lead?.tenantId;
     let tenant = null;
 
     if (tenantId) {
@@ -167,38 +195,9 @@ export const sendWhatsAppTemplate = async (
     const whatsappPhoneId = tenant?.whatsappPhoneId || process.env.WHATSAPP_PHONE_ID;
     const apiUrl = `https://graph.facebook.com/v18.0/${whatsappPhoneId}/messages`;
 
-    const notification = new Notification({
-      tenantId,
-      leadId,
-      channel: 'WhatsApp',
-      message: textSummary,
-      status: 'Sent',
-      sentAt: new Date(),
-    });
-    await notification.save();
+    const isMock = !whatsappToken || !whatsappPhoneId || whatsappToken.startsWith('mock');
 
-    if (lead) {
-      lead.timeline.push({
-        event: 'WhatsApp Template Sent',
-        timestamp: new Date(),
-        actor: 'System',
-        details: textSummary,
-      });
-      await lead.save();
-
-      const io = getIO();
-      if (io) {
-        io.to('/crm').emit('lead:updated', lead);
-        io.to('/crm').emit('notification:sent', {
-          leadId,
-          channel: 'WhatsApp',
-          message: textSummary,
-          timestamp: new Date(),
-        });
-      }
-    }
-
-    if (whatsappToken && whatsappPhoneId && !whatsappToken.startsWith('mock')) {
+    if (!isMock) {
       const formattedComponents = [];
 
       const bodyParams = parameters.filter(p => p.type === 'text');
@@ -243,9 +242,101 @@ export const sendWhatsAppTemplate = async (
       );
     }
 
+    // ON SUCCESS (real API post succeeded, or mock mode)
+    const notification = new Notification({
+      tenantId,
+      leadId,
+      channel: 'WhatsApp',
+      message: textSummary,
+      status: 'Sent',
+      sentAt: new Date(),
+    });
+    await notification.save();
+
+    if (lead) {
+      lead.timeline.push({
+        event: 'WhatsApp Template Sent',
+        timestamp: new Date(),
+        actor: 'System',
+        details: textSummary,
+      });
+      lead.chatHistory.push({ role: 'model', text: textSummary });
+      await lead.save();
+
+      const io = getIO();
+      if (io) {
+        io.to('/crm').emit('lead:updated', lead);
+        io.to('/crm').emit('notification:sent', {
+          leadId,
+          channel: 'WhatsApp',
+          message: textSummary,
+          timestamp: new Date(),
+        });
+        io.to('/crm').emit('whatsapp:message', {
+          leadId,
+          direction: 'outbound',
+          channel: 'WhatsApp',
+          status: 'sent',
+          text: textSummary,
+          templateName,
+          timestamp: new Date(),
+        });
+      }
+    } else {
+      const io = getIO();
+      if (io) {
+        io.to('/crm').emit('whatsapp:message', {
+          leadId,
+          direction: 'outbound',
+          channel: 'WhatsApp',
+          status: 'sent',
+          text: textSummary,
+          templateName,
+          timestamp: new Date(),
+        });
+      }
+    }
+
     return true;
   } catch (error: any) {
     console.error('Error sending WhatsApp template:', error.response?.data || error.message);
+
+    if (!tenantId) {
+      try {
+        const lead = await Lead.findById(leadId);
+        tenantId = lead?.tenantId;
+      } catch (e) { }
+    }
+
+    if (!tenantId) {
+      const defaultTenant = await Tenant.findOne({});
+      if (defaultTenant) {
+        tenantId = defaultTenant._id;
+      }
+    }
+
+    await Notification.create({
+      tenantId,
+      leadId,
+      channel: 'WhatsApp',
+      message: `Failed template: ${templateName}`,
+      status: 'Failed',
+      sentAt: new Date(),
+    });
+
+    const io = getIO();
+    if (io) {
+      io.to('/crm').emit('whatsapp:message', {
+        leadId,
+        direction: 'outbound',
+        channel: 'WhatsApp',
+        status: 'failed',
+        text: `Failed template: ${templateName}`,
+        templateName,
+        timestamp: new Date(),
+      });
+    }
+
     return false;
   }
 };

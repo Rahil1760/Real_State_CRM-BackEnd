@@ -45,13 +45,17 @@ export const initWorkers = () => {
         const tenantObj = await Tenant.findById(lead.tenantId).select('name');
         const companyName = tenantObj ? tenantObj.name : 'our platform';
 
-        const greeting = `Hello ${lead.name || "there"}! 👋 Welcome to ${companyName}. I am Kayra, your AI assistant. I'll help you find the perfect property.
-
-        🏘️ Currently, we have projects available in: ${availableLocations}.`;
-
-        // const greeting = `Hello ${lead.name || 'there'}! Welcome to NextLead. I am Kayra your AI assistant. I'll help match you with the perfect property. Could you please share your budget, preferred location, property type (Apartment, Villa, Plot, or Commercial), and whether you are buying or investing?`;
-
-        await sendWhatsAppText(lead._id.toString(), lead.mobile, greeting);
+        // TODO: The 'welcome_message' template must be created and approved in Meta Business Manager.
+        // It must have a single {{1}} body variable for the lead's first name.
+        const firstName = lead.name ? lead.name.split(' ')[0] : 'there';
+        await sendWhatsAppTemplate(
+          lead._id.toString(),
+          lead.mobile,
+          'welcome_message',
+          [
+            { type: 'text', text: firstName }
+          ]
+        );
       } else if (job.name === 'conversation-turn') {
         // Run AI text analysis turn
         await processAIConversation(leadId, message);

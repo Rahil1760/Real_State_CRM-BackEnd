@@ -279,6 +279,14 @@ export const receiveWhatsApp = async (req: Request, res: Response) => {
     const io = getIO();
     if (io) {
       io.to('/crm').emit('lead:updated', lead);
+      io.to('/crm').emit('whatsapp:message', {
+        leadId: lead._id.toString(),
+        direction: 'inbound',
+        channel: 'WhatsApp',
+        status: 'received',
+        text: textBody,
+        timestamp: new Date(),
+      });
     }
 
     // Trigger dynamic AI conversation chain via BullMQ
