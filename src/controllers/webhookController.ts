@@ -3,7 +3,7 @@ import Lead from '../models/Lead';
 import Tenant from '../models/Tenant';
 import { getIO } from '../services/socket/socketService';
 import { getQueue } from '../services/queue/queueConfig';
-import { sendWhatsAppText } from '../services/whatsapp/whatsappService';
+import { sendWhatsAppText, sendWhatsAppTemplate, formatWhatsAppNumber } from '../services/whatsapp/whatsappService';
 
 // Unified Webhook for Lead Sources (Facebook, Google, Portals, Forms)
 export const unifiedLeadWebhook = async (req: Request, res: Response) => {
@@ -24,8 +24,8 @@ export const unifiedLeadWebhook = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'Mobile number is required in webhook payload' });
     }
 
-    // Clean phone number (remove white spaces, count prefixes)
-    mobile = mobile.replace(/\s+/g, '').replace(/[-+]/g, '');
+    // Clean & format phone number (handles +91, 91, 0, or 10-digit numbers)
+    mobile = formatWhatsAppNumber(mobile);
 
     // Resolve tenantId
     let tenantId = req.body.tenantId || req.query.tenantId || req.headers['x-tenant-id'];
@@ -114,11 +114,52 @@ export const unifiedLeadWebhook = async (req: Request, res: Response) => {
       });
       await lead.save();
 
-      // Trigger AI qualification queue job
-      const qualifyQueue = getQueue('qualify-lead');
-      if (qualifyQueue) {
-        await qualifyQueue.add('qualify', { leadId: lead._id });
+      // 1. Queue AI qualification background job
+      try {
+        const qualifyQueue = getQueue('qualify-lead');
+        if (qualifyQueue) {
+          await qualifyQueue.add('qualify', { leadId: lead._id });
+        }
+      } catch (queueErr: any) {
+        console.warn('[Lead Webhook] Queue error (Redis offline?):', queueErr.message);
       }
+
+      // 2. Direct Welcome Template Dispatch (Ensures immediate WhatsApp send regardless of Redis status)
+      const capturedLeadId = lead._id.toString();
+      const capturedMobile = lead.mobile;
+      const capturedName = lead.name;
+      const capturedTenantId = lead.tenantId;
+
+      setImmediate(async () => {
+        try {
+          const tenantObj = await Tenant.findById(capturedTenantId);
+          const welcomeTemplate = tenantObj?.whatsappWelcomeTemplateName || 'welcome_massage';
+          const firstName = capturedName ? capturedName.split(' ')[0] : 'there';
+
+          let success = await sendWhatsAppTemplate(
+            capturedLeadId,
+            capturedMobile,
+            welcomeTemplate,
+            [{ type: 'text', text: firstName }]
+          );
+
+          if (!success) {
+            const fallbackTemplates = ['welcome_massage', 'welcome_message', 'lead_welcome_v1'].filter(t => t !== welcomeTemplate);
+            for (const fallback of fallbackTemplates) {
+              console.log(`[Lead Webhook Direct] Retrying welcome template fallback to '${fallback}'...`);
+              const fallbackSuccess = await sendWhatsAppTemplate(
+                capturedLeadId,
+                capturedMobile,
+                fallback,
+                [{ type: 'text', text: firstName }]
+              );
+              if (fallbackSuccess) break;
+            }
+          }
+        } catch (dispatchErr: any) {
+          console.error('[Lead Webhook Direct] Failed to send welcome template:', dispatchErr.message);
+        }
+      });
 
       const io = getIO();
       if (io) {

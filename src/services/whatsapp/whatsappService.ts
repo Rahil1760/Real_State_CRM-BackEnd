@@ -251,7 +251,9 @@ export const sendWhatsAppTemplate = async (
 
     const isMock = !whatsappToken || !whatsappPhoneId || whatsappToken.startsWith('mock');
 
-    if (!isMock) {
+    if (isMock) {
+      console.warn(`[WhatsApp Template Dispatch] WARNING: WhatsApp Token ("${whatsappToken || 'MISSING'}") or Phone ID ("${whatsappPhoneId || 'MISSING'}") is missing or mock. Live message NOT sent to Meta API.`);
+    } else {
       const formattedComponents: any[] = [];
 
       // 1. Header Media goes first

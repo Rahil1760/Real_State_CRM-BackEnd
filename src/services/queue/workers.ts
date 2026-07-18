@@ -44,7 +44,7 @@ export const initWorkers = () => {
 
         const tenantObj = await Tenant.findById(lead.tenantId);
         const companyName = tenantObj ? tenantObj.name : 'our platform';
-        const welcomeTemplate = tenantObj?.whatsappWelcomeTemplateName || process.env.WHATSAPP_WELCOME_TEMPLATE || 'welcome_massage';
+        const welcomeTemplate = tenantObj?.whatsappWelcomeTemplateName || 'welcome_massage';
 
         const firstName = lead.name ? lead.name.split(' ')[0] : 'there';
         let success = await sendWhatsAppTemplate(
@@ -227,7 +227,7 @@ export const initWorkers = () => {
         }
 
         const tenant = await Tenant.findById(tenantId);
-        const welcomeTemplate = tenant?.whatsappWelcomeTemplateName || process.env.WHATSAPP_WELCOME_TEMPLATE || 'welcome_massage';
+        const welcomeTemplate = tenant?.whatsappWelcomeTemplateName || 'welcome_massage';
         const senderName = tenant?.senderDisplayName || tenant?.name || 'RealtyCloudai';
 
         for (let i = 0; i < dataRows.length; i++) {
