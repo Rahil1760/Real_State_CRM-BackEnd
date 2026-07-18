@@ -73,7 +73,7 @@ const TenantSchema: Schema = new Schema(
     },
     razorpayKeyId: { type: String },
     razorpaySecret: { type: String },
-    whatsappWelcomeTemplateName: { type: String, default: 'lead_welcome_v1' },
+    whatsappWelcomeTemplateName: { type: String, default: 'welcome_massage' },
     senderDisplayName: { type: String, default: '' },
     marketingSpend: { type: Number, default: 0 },
     marketingSpendBreakdown: {

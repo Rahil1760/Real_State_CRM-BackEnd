@@ -1,4 +1,4 @@
-﻿import mongoose from 'mongoose';
+import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import bcrypt from 'bcryptjs';
 import Tenant from './models/Tenant';
@@ -82,7 +82,7 @@ const seedDB = async () => {
     // Platform SuperAdmin
     const superAdmin = new User({
       name: 'Platform SuperAdmin',
-      email: 'superadmin@NextLead.com',
+      email: 'superadmin@realtycloudai.com',
       passwordHash: passSuper,
       role: 'SuperAdmin',
       tenantId: null, // superadmin is global
@@ -99,14 +99,14 @@ const seedDB = async () => {
     });
     const managerA = new User({
       name: 'John Sales Manager A',
-      email: 'manager@NextLead.com',
+      email: 'manager@realtycloudai.com',
       passwordHash: passManager,
       role: 'Sales Manager',
       tenantId: tenantA._id,
     });
     const execA = new User({
       name: 'Dev Executive A',
-      email: 'exec1@NextLead.com',
+      email: 'exec1@realtycloudai.com',
       passwordHash: passExec,
       role: 'Sales Executive',
       tenantId: tenantA._id,
@@ -125,7 +125,7 @@ const seedDB = async () => {
     });
     const execB = new User({
       name: 'Tina Executive B',
-      email: 'exec2@NextLead.com',
+      email: 'exec2@realtycloudai.com',
       passwordHash: passExec,
       role: 'Sales Executive',
       tenantId: tenantB._id,
@@ -157,8 +157,8 @@ const seedDB = async () => {
         price,
         amenities: ['24x7 Security', 'Swimming Pool', 'Gymnasium', 'Power Backup'].slice(0, 2 + (i % 3)),
         s3Urls: {
-          brochure: `https://NextLead-mock-s3.s3.amazonaws.com/brochures/brochure_rahil_${i + 1}.pdf`,
-          floorPlan: `https://NextLead-mock-s3.s3.amazonaws.com/floorplans/floorplan_rahil_${i + 1}.png`
+          brochure: `https://realtycloudai-mock-s3.s3.amazonaws.com/brochures/brochure_rahil_${i + 1}.pdf`,
+          floorPlan: `https://realtycloudai-mock-s3.s3.amazonaws.com/floorplans/floorplan_rahil_${i + 1}.png`
         },
         description: `Premium real estate opportunity by Rahil Builders at ${location}.`
       });
@@ -186,8 +186,8 @@ const seedDB = async () => {
         price,
         amenities: ['Gymnasium', 'EV Charging', 'Clubhouse'].slice(0, 1 + i),
         s3Urls: {
-          brochure: `https://NextLead-mock-s3.s3.amazonaws.com/brochures/brochure_orchid_${i + 1}.pdf`,
-          floorPlan: `https://NextLead-mock-s3.s3.amazonaws.com/floorplans/floorplan_orchid_${i + 1}.png`
+          brochure: `https://realtycloudai-mock-s3.s3.amazonaws.com/brochures/brochure_orchid_${i + 1}.pdf`,
+          floorPlan: `https://realtycloudai-mock-s3.s3.amazonaws.com/floorplans/floorplan_orchid_${i + 1}.png`
         },
         description: `Stunning modern living concepts by Orchid Residences situated at ${location}.`
       });

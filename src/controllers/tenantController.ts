@@ -66,8 +66,8 @@ export const registerTenant = async (req: Request, res: Response) => {
     await sendEmail(
       null,
       email,
-      'Welcome to NextLead SaaS Platform!',
-      `Dear ${name},\n\nThank you for choosing NextLead for your company: ${companyName}.\n\nYour subdomain slug is: ${cleanSlug}. You can log in using: ${email.toLowerCase()}.\n\nYour 14-day free trial is active with limits: 50 leads, 2 team users, and 5 properties.\n\nBest,\nThe NextLead team`
+      'Welcome to RealtyCloudai SaaS Platform!',
+      `Dear ${name},\n\nThank you for choosing RealtyCloudai for your company: ${companyName}.\n\nYour subdomain slug is: ${cleanSlug}. You can log in using: ${email.toLowerCase()}.\n\nYour 14-day free trial is active with limits: 50 leads, 2 team users, and 5 properties.\n\nBest,\nThe RealtyCloudai team`
     );
 
     return res.status(201).json({
@@ -136,7 +136,7 @@ export const updateTenantProfile = async (req: any, res: Response) => {
       }
       tenant.whatsappToken = trimmedToken;
     }
-    if (whatsappWelcomeTemplateName !== undefined) tenant.whatsappWelcomeTemplateName = whatsappWelcomeTemplateName;
+    if (whatsappWelcomeTemplateName !== undefined) tenant.whatsappWelcomeTemplateName = String(whatsappWelcomeTemplateName).trim() || 'welcome_massage';
     if (senderDisplayName !== undefined) tenant.senderDisplayName = senderDisplayName;
     if (marketingSpend !== undefined) tenant.marketingSpend = Number(marketingSpend) || 0;
     

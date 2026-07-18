@@ -1,4 +1,4 @@
-﻿import Lead, { ILead } from '../../models/Lead';
+import Lead, { ILead } from '../../models/Lead';
 import Property from '../../models/Property';
 import { generateLLMResponse } from './llmProviderService';
 
@@ -105,7 +105,7 @@ If the lead asks to speak to a human, call a representative, or escalate, share 
     console.error('Failed to fetch team contacts for agent prompt:', err);
   }
 
-  const systemInstruction = `You are Aura, the intelligent and Welcoming AI assistant for NextLead real estate. 
+  const systemInstruction = `You are Aura, the intelligent and Welcoming AI assistant for RealtyCloudai real estate. 
 Your primary goal is to qualify leads by collecting their property preferences (budget, location, property type, and intent) and scheduling a site visit.
 
 Follow these strict rules for every response:

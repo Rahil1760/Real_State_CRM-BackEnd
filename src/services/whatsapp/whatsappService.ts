@@ -6,15 +6,67 @@ import Notification from '../../models/Notification';
 import Property from '../../models/Property';
 import Visit from '../../models/Visit';
 import Booking from '../../models/Booking';
+import ProjectDocument from '../../models/ProjectDocument';
 import { getIO } from '../socket/socketService';
 import { sendEmail, sendSMS } from '../notificationService';
 import { getQueue } from '../queue/queueConfig';
 import { analyzeFeedbackSentiment } from '../ai/llmProviderService';
 
+export const formatWhatsAppNumber = (phone: string): string => {
+  if (!phone) return '';
+  let cleaned = phone.replace(/\D/g, ''); // strip non-digits
+  if (cleaned.startsWith('0')) {
+    cleaned = cleaned.substring(1);
+  }
+  if (cleaned.length === 10) {
+    cleaned = '91' + cleaned;
+  }
+  return cleaned;
+};
+
+export const resolvePropertyBrochure = async (property: any): Promise<{ url: string; filename: string } | null> => {
+  if (!property) return null;
+
+  const tenantId = property.tenantId;
+  const propertyId = property._id;
+
+  let relativeOrFullUrl: string | null = property.s3Urls?.brochure || null;
+  let filename: string = `${(property.title || 'Property').trim().replace(/\s+/g, '_')}_Brochure.pdf`;
+
+  if (!relativeOrFullUrl || relativeOrFullUrl.includes('mock-s3') || relativeOrFullUrl === '') {
+    // 1. Search in ProjectDocument for uploaded files linked to this property
+    const doc = await ProjectDocument.findOne({ tenantId, propertyId }).sort({ _id: -1 }).lean();
+    if (doc && doc.s3Url) {
+      relativeOrFullUrl = doc.s3Url;
+      if (doc.fileName) filename = doc.fileName;
+    } else {
+      // 2. Fallback to any PDF document uploaded for this tenant
+      const tenantDoc = await ProjectDocument.findOne({ tenantId }).sort({ _id: -1 }).lean();
+      if (tenantDoc && tenantDoc.s3Url) {
+        relativeOrFullUrl = tenantDoc.s3Url;
+        if (tenantDoc.fileName) filename = tenantDoc.fileName;
+      }
+    }
+  }
+
+  if (!relativeOrFullUrl || relativeOrFullUrl.includes('mock-s3')) {
+    return null;
+  }
+
+  const getBaseUrl = () => {
+    const envUrl = process.env.PUBLIC_URL || process.env.BACKEND_URL || process.env.VITE_BASE_URL;
+    return envUrl ? envUrl.replace(/\/api\/?$/, '') : `http://localhost:${process.env.PORT || 5000}`;
+  };
+
+  const fullUrl = relativeOrFullUrl.startsWith('/') ? `${getBaseUrl()}${relativeOrFullUrl}` : relativeOrFullUrl;
+  return { url: fullUrl, filename };
+};
+
 export const sendWhatsAppText = async (leadId: string, to: string, text: string, skipHistoryLog: boolean = false, tenantIdOverride?: string): Promise<boolean> => {
   let tenantId: any = null;
   try {
-    console.log(`[WhatsApp Dispatch] Outbox -> To: ${to}, Message: "${text}"`);
+    const formattedTo = formatWhatsAppNumber(to);
+    console.log(`[WhatsApp Dispatch] Outbox -> To: ${formattedTo} (raw: ${to}), Message: "${text}"`);
 
     // Fetch Lead to get tenantId
     const lead = leadId ? await Lead.findById(leadId) : null;
@@ -41,7 +93,7 @@ export const sendWhatsAppText = async (leadId: string, to: string, text: string,
       console.log("Phone ID:", whatsappPhoneId);
       console.log("Token:", whatsappToken?.substring(0, 20) + "...");
       console.log("API URL:", apiUrl);
-      console.log("To:", to);
+      console.log("To:", formattedTo);
       console.log("====================================");
 
       await axios.post(
@@ -49,7 +101,7 @@ export const sendWhatsAppText = async (leadId: string, to: string, text: string,
         {
           messaging_product: 'whatsapp',
           recipient_type: 'individual',
-          to,
+          to: formattedTo,
           type: 'text',
           text: { preview_url: false, body: text },
         },
@@ -165,20 +217,22 @@ export const sendWhatsAppTemplate = async (
   leadId: string,
   to: string,
   templateName: string,
-  parameters: Array<{ type: string; text?: string; image?: { link: string }; document?: { link: string; filename: string } }> = []
+  parameters: Array<{ type: string; text?: string; image?: { link: string }; document?: { link: string; filename: string } }> = [],
+  languageCode: string = 'en_US'
 ): Promise<boolean> => {
   let tenantId: any = null;
   try {
+    const formattedTo = formatWhatsAppNumber(to);
     let textSummary = `Sent Template: ${templateName}`;
     if (parameters.length > 0) {
       const details = parameters.map(p => p.text || p.image?.link || p.document?.link || '').join(', ');
       textSummary += ` [Vars: ${details}]`;
     }
 
-    console.log(`[WhatsApp Template Dispatch] Outbox -> To: ${to}, Template: ${templateName}`);
+    console.log(`[WhatsApp Template Dispatch] Outbox -> To: ${formattedTo} (raw: ${to}), Template: ${templateName}, Lang: ${languageCode}`);
 
     // Fetch Lead to get tenantId
-    const lead = await Lead.findById(leadId);
+    const lead = leadId ? await Lead.findById(leadId) : null;
     tenantId = lead?.tenantId;
     let tenant = null;
 
@@ -198,16 +252,9 @@ export const sendWhatsAppTemplate = async (
     const isMock = !whatsappToken || !whatsappPhoneId || whatsappToken.startsWith('mock');
 
     if (!isMock) {
-      const formattedComponents = [];
+      const formattedComponents: any[] = [];
 
-      const bodyParams = parameters.filter(p => p.type === 'text');
-      if (bodyParams.length > 0) {
-        formattedComponents.push({
-          type: 'body',
-          parameters: bodyParams.map(p => ({ type: 'text', text: p.text })),
-        });
-      }
-
+      // 1. Header Media goes first
       const headerMedia = parameters.find(p => p.type === 'image' || p.type === 'document');
       if (headerMedia) {
         formattedComponents.push({
@@ -220,26 +267,90 @@ export const sendWhatsAppTemplate = async (
         });
       }
 
-      await axios.post(
-        apiUrl,
-        {
+      // 2. Body parameters go second
+      const bodyParams = parameters.filter(p => p.type === 'text');
+      if (bodyParams.length > 0) {
+        formattedComponents.push({
+          type: 'body',
+          parameters: bodyParams.map(p => ({ type: 'text', text: p.text })),
+        });
+      }
+
+      const buildPayload = (lang: string) => {
+        const payload: any = {
           messaging_product: 'whatsapp',
           recipient_type: 'individual',
-          to,
+          to: formattedTo,
           type: 'template',
           template: {
             name: templateName,
-            language: { code: 'en_US' },
-            components: formattedComponents,
+            language: { code: lang },
           },
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${whatsappToken}`,
-            'Content-Type': 'application/json',
-          },
+        };
+        if (formattedComponents.length > 0) {
+          payload.template.components = formattedComponents;
         }
-      );
+        return payload;
+      };
+
+      try {
+        await axios.post(
+          apiUrl,
+          buildPayload(languageCode),
+          {
+            headers: {
+              Authorization: `Bearer ${whatsappToken}`,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+      } catch (postError: any) {
+        const errCode = postError.response?.data?.error?.code;
+        // If error 132001 (Template not found in language/workspace), try language fallback (en_US <-> en) or template alias
+        if (errCode === 132001) {
+          const fallbackLang = languageCode === 'en_US' ? 'en' : 'en_US';
+          console.log(`[WhatsApp Template] Retrying template "${templateName}" with fallback language "${fallbackLang}"...`);
+          try {
+            await axios.post(
+              apiUrl,
+              buildPayload(fallbackLang),
+              {
+                headers: {
+                  Authorization: `Bearer ${whatsappToken}`,
+                  'Content-Type': 'application/json',
+                },
+              }
+            );
+          } catch (langErr: any) {
+            // Check if template name alias fallback applies (e.g. welcome_massage <-> welcome_message)
+            let altTemplateName: string | null = null;
+            if (templateName === 'welcome_massage') altTemplateName = 'welcome_message';
+            else if (templateName === 'welcome_message') altTemplateName = 'welcome_massage';
+
+            if (altTemplateName) {
+              console.log(`[WhatsApp Template] Retrying with template alias "${altTemplateName}"...`);
+              const altPayload = {
+                ...buildPayload(languageCode),
+                template: { name: altTemplateName, language: { code: languageCode } }
+              };
+              await axios.post(
+                apiUrl,
+                altPayload,
+                {
+                  headers: {
+                    Authorization: `Bearer ${whatsappToken}`,
+                    'Content-Type': 'application/json',
+                  },
+                }
+              );
+            } else {
+              throw langErr;
+            }
+          }
+        } else {
+          throw postError;
+        }
+      }
     }
 
     // ON SUCCESS (real API post succeeded, or mock mode)
@@ -299,11 +410,12 @@ export const sendWhatsAppTemplate = async (
 
     return true;
   } catch (error: any) {
-    console.error('Error sending WhatsApp template:', error.response?.data || error.message);
+    const metaErrorDetails = error.response?.data?.error?.error_data?.details || error.response?.data?.error?.message || error.message;
+    console.error('Error sending WhatsApp template:', JSON.stringify(error.response?.data || error.message, null, 2));
 
     if (!tenantId) {
       try {
-        const lead = await Lead.findById(leadId);
+        const lead = leadId ? await Lead.findById(leadId) : null;
         tenantId = lead?.tenantId;
       } catch (e) { }
     }
@@ -315,11 +427,13 @@ export const sendWhatsAppTemplate = async (
       }
     }
 
+    const failureReason = `Failed template "${templateName}": ${metaErrorDetails}`;
+
     await Notification.create({
       tenantId,
       leadId,
       channel: 'WhatsApp',
-      message: `Failed template: ${templateName}`,
+      message: failureReason,
       status: 'Failed',
       sentAt: new Date(),
     });
@@ -331,7 +445,7 @@ export const sendWhatsAppTemplate = async (
         direction: 'outbound',
         channel: 'WhatsApp',
         status: 'failed',
-        text: `Failed template: ${templateName}`,
+        text: failureReason,
         templateName,
         timestamp: new Date(),
       });
@@ -409,12 +523,13 @@ export const sendWhatsAppDocument = async (
 
     // Attempt real dispatch if API keys exist
     if (whatsappToken && whatsappPhoneId && !whatsappToken.startsWith('mock')) {
+      const formattedTo = formatWhatsAppNumber(to);
       await axios.post(
         apiUrl,
         {
           messaging_product: 'whatsapp',
           recipient_type: 'individual',
-          to,
+          to: formattedTo,
           type: 'document',
           document: {
             link: documentUrl,
@@ -463,7 +578,7 @@ export const sendWhatsAppDocument = async (
   }
 };
 
-export const AURA_SYSTEM_PROMPT = `You are Aura, the intelligent and welcoming AI assistant for NextLead real estate. 
+export const AURA_SYSTEM_PROMPT = `You are Aura, the intelligent and welcoming AI assistant for RealtyCloudai real estate. 
 
 Your primary goal is to qualify leads by collecting their property preferences (budget, location, property type, and intent) and seamlessly scheduling a site visit. 
 
@@ -561,7 +676,7 @@ export const scheduleVisit = async (leadId: string, propertyId: string, dateStr:
       { type: 'text', text: scheduledDate.toLocaleString() },
     ]);
     const adminGmail =
-      await sendEmail(leadId, 'sales-admin@NextLead.com', 'Site Visit Scheduled', msg);
+      await sendEmail(leadId, 'sales-admin@realtycloudai.com', 'Site Visit Scheduled', msg);
     await sendSMS(leadId, '+15550199', msg);
 
     // Socket update
@@ -742,28 +857,20 @@ export const runRuleBasedAssistant = async (lead: any, textMessage: string, io: 
       const properties = await searchProperties(lead.budget, lead.location, lead.propertyType);
       if (properties.length > 0) {
         const prop = properties[0];
-        const getBaseUrl = () => {
-          const envUrl = process.env.VITE_BASE_URL || process.env.BACKEND_URL;
-          return envUrl ? envUrl.replace(/\/api\/?$/, '') : `http://localhost:${process.env.PORT || 5000}`;
-        };
-        const brochureUrl = prop.s3Urls?.brochure 
-          ? (prop.s3Urls.brochure.startsWith('/') 
-              ? `${getBaseUrl()}${prop.s3Urls.brochure}` 
-              : prop.s3Urls.brochure)
-          : null;
+        const brochure = await resolvePropertyBrochure(prop);
         aiResponse = `Congratulations! You are now qualified. I found a match: *${prop.title}* at ${prop.location} for \u20b9${prop.price.toLocaleString()}.\nAmenities: ${prop.amenities.join(', ')}.\n\nWould you like to schedule a site visit? Reply with **Yes** or **No**.`;
         lead.status = 'Qualified'; // Move to Stage 3
 
-        if (brochureUrl) {
+        if (brochure) {
           setTimeout(async () => {
             await sendWhatsAppDocument(
               lead._id.toString(),
               lead.mobile,
-              brochureUrl,
-              `${prop.title.replace(/\s+/g, '_')}_Brochure.pdf`,
+              brochure.url,
+              brochure.filename,
               `Brochure for ${prop.title}`
             );
-          }, 3000);
+          }, 2000);
         }
       } else {
         aiResponse = `Thank you for completing your profile! Let me search our inventory for properties in ${lead.location} below â‚¹${lead.budget.toLocaleString()}. We will get back to you shortly.`;
@@ -885,7 +992,7 @@ export const runRuleBasedAssistant = async (lead: any, textMessage: string, io: 
   } else if (lead.status === 'Ready to Buy') {
     aiResponse = `Excellent! Your booking request has been submitted to our Sales Manager. Once approved, we will send you the document checklist and payment link.`;
   } else if (lead.status === 'Booked') {
-    aiResponse = `Welcome to the NextLead family! Your booking is confirmed. We will share monthly construction updates and EMI statements here.`;
+    aiResponse = `Welcome to the RealtyCloudai family! Your booking is confirmed. We will share monthly construction updates and EMI statements here.`;
   } else {
     // Fallback
     aiResponse = `Hi ${lead.name}, how can I assist you with your real estate needs today?`;

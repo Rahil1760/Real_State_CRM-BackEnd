@@ -1,4 +1,4 @@
-﻿import { Request, Response } from 'express';
+import { Request, Response } from 'express';
 import { TenantRequest } from '../middleware/tenant';
 import Booking from '../models/Booking';
 import Lead from '../models/Lead';
@@ -102,13 +102,13 @@ export const approveBooking = async (req: TenantRequest, res: Response) => {
     });
     await lead.save();
 
-    const checklistText = `Hello ${lead.name}, your booking request for *${property.title}* has been approved and recorded as cash payment! Welcome to the NextLead family!\n\nðŸ“‹ *Document Checklist needed:* \n1. PAN Card copy\n2. Aadhaar Card copy\n3. 3 months salary slips / tax returns\n4. Passport size photo.`;
+    const checklistText = `Hello ${lead.name}, your booking request for *${property.title}* has been approved and recorded as cash payment! Welcome to the RealtyCloudai family!\n\nðŸ“‹ *Document Checklist needed:* \n1. PAN Card copy\n2. Aadhaar Card copy\n3. 3 months salary slips / tax returns\n4. Passport size photo.`;
     await sendWhatsAppText(lead._id.toString(), lead.mobile, checklistText);
 
     await sendEmail(
       lead._id.toString(),
-      lead.email || 'customer@NextLead.com',
-      'Booking Confirmed (Cash Payment Received) - NextLead',
+      lead.email || 'customer@realtycloudai.com',
+      'Booking Confirmed (Cash Payment Received) - RealtyCloudai',
       `Dear ${lead.name},\n\nYour purchase booking for ${property.title} has been approved and confirmed. We have successfully registered your cash token payment of â‚¹${booking.amount.toLocaleString()}.`
     );
 
@@ -167,7 +167,7 @@ export const paymentWebhook = async (req: Request, res: Response) => {
       });
       await lead.save();
 
-      const text = `Welcome to NextLead, ${lead.name}! ðŸ  Your booking is officially confirmed. We will keep you updated on construction updates here.`;
+      const text = `Welcome to RealtyCloudai, ${lead.name}! ðŸ   Your booking is officially confirmed. We will keep you updated on construction updates here.`;
       await sendWhatsAppText(lead._id.toString(), lead.mobile, text);
 
       // Trigger drip welcome
@@ -176,7 +176,7 @@ export const paymentWebhook = async (req: Request, res: Response) => {
         await emailQueue.add('welcome-drip', {
           leadId: lead._id,
           to: lead.email,
-          subject: 'Welcome to the NextLead Family!',
+          subject: 'Welcome to the RealtyCloudai Family!',
           text: `Hi ${lead.name},\n\nCongratulations on your property purchase. We have received your booking token payment.\n\nYour referral code is: REF-${lead._id.toString().substring(18)}.`
         });
       }

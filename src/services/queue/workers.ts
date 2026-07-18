@@ -14,7 +14,7 @@ import * as XLSX from 'xlsx';
 import pdfParse from 'pdf-parse';
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
 import { processAIConversation, searchProperties, scoreLeadPostVisit } from '../ai/aiService';
-import { sendWhatsAppText, sendWhatsAppTemplate, sendWhatsAppDocument } from '../whatsapp/whatsappService';
+import { sendWhatsAppText, sendWhatsAppTemplate, sendWhatsAppDocument, resolvePropertyBrochure } from '../whatsapp/whatsappService';
 import { sendEmail, sendSMS } from '../notificationService';
 import { getIO } from '../socket/socketService';
 import { generateQueryEmbedding } from '../ai/aiTools';
@@ -42,20 +42,34 @@ export const initWorkers = () => {
           .filter((location, index, arr) => arr.indexOf(location) === index)
           .join(", ");
 
-        const tenantObj = await Tenant.findById(lead.tenantId).select('name');
+        const tenantObj = await Tenant.findById(lead.tenantId);
         const companyName = tenantObj ? tenantObj.name : 'our platform';
+        const welcomeTemplate = tenantObj?.whatsappWelcomeTemplateName || process.env.WHATSAPP_WELCOME_TEMPLATE || 'welcome_massage';
 
-        // TODO: The 'welcome_message' template must be created and approved in Meta Business Manager.
-        // It must have a single {{1}} body variable for the lead's first name.
         const firstName = lead.name ? lead.name.split(' ')[0] : 'there';
-        await sendWhatsAppTemplate(
+        let success = await sendWhatsAppTemplate(
           lead._id.toString(),
           lead.mobile,
-          'welcome_message',
+          welcomeTemplate,
           [
             { type: 'text', text: firstName }
           ]
         );
+        if (!success) {
+          const fallbackTemplates = ['welcome_massage', 'welcome_message', 'lead_welcome_v1'].filter(t => t !== welcomeTemplate);
+          for (const fallback of fallbackTemplates) {
+            console.log(`[Qualify Worker] Retrying welcome template fallback to '${fallback}'...`);
+            const fallbackSuccess = await sendWhatsAppTemplate(
+              lead._id.toString(),
+              lead.mobile,
+              fallback,
+              [
+                { type: 'text', text: firstName }
+              ]
+            );
+            if (fallbackSuccess) break;
+          }
+        }
       } else if (job.name === 'conversation-turn') {
         // Run AI text analysis turn
         await processAIConversation(leadId, message);
@@ -134,24 +148,16 @@ export const initWorkers = () => {
         const properties = await searchProperties(lead.tenantId.toString());
         if (properties.length > 0) {
           const prop = properties[0];
-          const getBaseUrl = () => {
-            const envUrl = process.env.VITE_BASE_URL || process.env.BACKEND_URL;
-            return envUrl ? envUrl.replace(/\/api\/?$/, '') : `http://localhost:${process.env.PORT || 5000}`;
-          };
-          const brochureUrl = prop.s3Urls?.brochure 
-            ? (prop.s3Urls.brochure.startsWith('/') 
-                ? `${getBaseUrl()}${prop.s3Urls.brochure}` 
-                : prop.s3Urls.brochure)
-            : null;
+          const brochure = await resolvePropertyBrochure(prop);
           const text = `Hi ${lead.name}, we found a property match: *${prop.title}* at ${prop.location} for \u20b9${prop.price.toLocaleString()}.\nWould you like to schedule a site visit?`;
           await sendWhatsAppText(lead._id.toString(), lead.mobile, text);
 
-          if (brochureUrl) {
+          if (brochure) {
             await sendWhatsAppDocument(
               lead._id.toString(),
               lead.mobile,
-              brochureUrl,
-              `${prop.title.replace(/\s+/g, '_')}_Brochure.pdf`,
+              brochure.url,
+              brochure.filename,
               `Brochure for ${prop.title}`
             );
           }
@@ -221,8 +227,8 @@ export const initWorkers = () => {
         }
 
         const tenant = await Tenant.findById(tenantId);
-        const welcomeTemplate = tenant?.whatsappWelcomeTemplateName || 'lead_welcome_v1';
-        const senderName = tenant?.senderDisplayName || tenant?.name || 'NextLead';
+        const welcomeTemplate = tenant?.whatsappWelcomeTemplateName || process.env.WHATSAPP_WELCOME_TEMPLATE || 'welcome_massage';
+        const senderName = tenant?.senderDisplayName || tenant?.name || 'RealtyCloudai';
 
         for (let i = 0; i < dataRows.length; i++) {
           const row = dataRows[i];

@@ -3,6 +3,7 @@ import { Server, Socket } from 'socket.io';
 import jwt from 'jsonwebtoken';
 
 let io: Server | null = null;
+let crmNamespace: any = null;
 
 export const initSocket = (server: HttpServer): Server => {
   const allowedOrigins = [
@@ -27,10 +28,10 @@ export const initSocket = (server: HttpServer): Server => {
     },
   });
 
-  const crmNamespace = io.of('/crm');
+  crmNamespace = io.of('/crm');
 
   // Middleware for JWT authentication
-  crmNamespace.use((socket: Socket, next) => {
+  crmNamespace.use((socket: Socket, next: any) => {
     const token = socket.handshake.auth.token || socket.handshake.query.token;
 
     if (!token) {
@@ -51,19 +52,58 @@ export const initSocket = (server: HttpServer): Server => {
 
   crmNamespace.on('connection', (socket: Socket) => {
     const user = (socket as any).user;
-    console.log(`[Socket] User connected to /crm: ${user.email} (${user.role})`);
+    console.log(`[Socket] User connected to /crm: ${user?.email || 'authenticated user'} (${user?.role || 'user'})`);
 
     // Join lead workspace channel
     socket.join('crm_workspace');
 
     socket.on('disconnect', () => {
-      console.log(`[Socket] User disconnected: ${user.email}`);
+      console.log(`[Socket] User disconnected: ${user?.email || 'user'}`);
     });
   });
+
+  // Patch io.to and io.emit to guarantee events are emitted to clients connected to /crm namespace
+  const originalTo = io.to.bind(io);
+  const originalEmit = io.emit.bind(io);
+
+  io.to = function (room: string | string[]) {
+    const roomStr = Array.isArray(room) ? room.join(',') : room;
+    if (roomStr === '/crm' || roomStr === 'crm_workspace') {
+      return {
+        emit: (event: string, ...args: any[]) => {
+          if (crmNamespace) {
+            crmNamespace.emit(event, ...args);
+            crmNamespace.to('crm_workspace').emit(event, ...args);
+          }
+          return originalTo(roomStr).emit(event, ...args);
+        }
+      } as any;
+    }
+    return originalTo(room);
+  };
+
+  io.emit = function (event: string, ...args: any[]) {
+    if (crmNamespace) {
+      crmNamespace.emit(event, ...args);
+      crmNamespace.to('crm_workspace').emit(event, ...args);
+    }
+    return originalEmit(event, ...args);
+  };
 
   return io;
 };
 
 export const getIO = (): Server | null => {
   return io;
+};
+
+export const emitToCRM = (event: string, data: any) => {
+  if (crmNamespace) {
+    crmNamespace.emit(event, data);
+    crmNamespace.to('crm_workspace').emit(event, data);
+  }
+  if (io) {
+    io.emit(event, data);
+    io.to('/crm').emit(event, data);
+  }
 };

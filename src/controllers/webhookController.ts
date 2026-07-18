@@ -165,6 +165,46 @@ export const receiveWhatsApp = async (req: Request, res: Response) => {
     }
 
     const value = changes[0].value;
+
+    // Handle Meta status updates (sent, delivered, read, failed)
+    const statuses = value.statuses;
+    if (statuses && statuses.length > 0) {
+      const statusObj = statuses[0];
+      const recipientId = statusObj.recipient_id;
+      const status = statusObj.status; // 'sent', 'delivered', 'read', 'failed'
+      const errors = statusObj.errors;
+
+      console.log(`[WhatsApp Webhook Status] Recipient: ${recipientId}, Status: ${status}`);
+
+      if (recipientId) {
+        const cleanRecipient = recipientId.replace(/\s+/g, '').replace(/[-+]/g, '');
+        const lead = await Lead.findOne({ mobile: cleanRecipient }).sort({ updatedAt: -1 });
+        if (lead) {
+          const io = getIO();
+          if (io) {
+            io.to('/crm').emit('whatsapp:message', {
+              leadId: lead._id.toString(),
+              direction: 'outbound',
+              channel: 'WhatsApp',
+              status: status === 'failed' ? 'failed' : status,
+              text: status === 'failed' && errors && errors[0] ? `Failed: ${errors[0].title || errors[0].message}` : `Status: ${status}`,
+              timestamp: new Date(),
+            });
+            if (status === 'failed' && errors && errors[0]) {
+              lead.timeline.push({
+                event: 'WhatsApp Delivery Failed',
+                timestamp: new Date(),
+                actor: 'System',
+                details: `Meta Cloud API Error: ${errors[0].title || errors[0].message} (Code: ${errors[0].code})`,
+              });
+              await lead.save();
+              io.to('/crm').emit('lead:updated', lead);
+            }
+          }
+        }
+      }
+    }
+
     const messages = value.messages;
     if (!messages || messages.length === 0) {
       return res.status(200).send('EVENT_RECEIVED');

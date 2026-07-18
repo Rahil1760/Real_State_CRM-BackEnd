@@ -61,7 +61,7 @@ export const sendEmail = async (leadId: string | null, to: string, subject: stri
     // Try real send (fallback if user details are mock)
     if (process.env.SMTP_USER && !process.env.SMTP_USER.startsWith('mock')) {
       await transporter.sendMail({
-        from: `"AuraHome CRM" <${process.env.SMTP_USER}>`,
+        from: `"RealtyCloudai CRM" <${process.env.SMTP_USER}>`,
         to,
         subject,
         text,

@@ -4,7 +4,7 @@ import Lead, { ILead } from '../../models/Lead';
 import Property from '../../models/Property';
 import Visit from '../../models/Visit';
 import Booking from '../../models/Booking';
-import { sendWhatsAppText, sendWhatsAppTemplate, sendWhatsAppDocument } from '../whatsapp/whatsappService';
+import { sendWhatsAppText, sendWhatsAppTemplate, sendWhatsAppDocument, resolvePropertyBrochure } from '../whatsapp/whatsappService';
 import { getIO } from '../socket/socketService';
 import { sendEmail, sendSMS } from '../notificationService';
 import { getQueue } from '../queue/queueConfig';
@@ -14,7 +14,7 @@ import User from '../../models/User';
 
 const MOCK_PROPERTY_ID = '507f1f77bcf86cd799439011';
 
-export const AURA_SYSTEM_PROMPT = `You are Kayra, the intelligent and welcoming AI assistant for NextLead real estate. 
+export const AURA_SYSTEM_PROMPT = `You are Kayra, the intelligent and welcoming AI assistant for RealtyCloudai real estate. 
 
 Your primary goal is to qualify leads by collecting their property preferences (budget, location, property type, and intent) and seamlessly scheduling a site visit. 
 
@@ -527,23 +527,15 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
       const prop = properties[0];
       lead.aiContext = lead.aiContext || {};
       lead.aiContext.proposedPropertyId = prop._id.toString();
-      const getBaseUrl = () => {
-        const envUrl = process.env.VITE_BASE_URL || process.env.BACKEND_URL;
-        return envUrl ? envUrl.replace(/\/api\/?$/, '') : `http://localhost:${process.env.PORT || 5000}`;
-      };
-      const brochureUrl = prop.s3Urls?.brochure 
-        ? (prop.s3Urls.brochure.startsWith('/') 
-            ? `${getBaseUrl()}${prop.s3Urls.brochure}` 
-            : prop.s3Urls.brochure)
-        : null;
 
-      if (brochureUrl) {
+      const brochure = await resolvePropertyBrochure(prop);
+      if (brochure) {
         setTimeout(async () => {
           await sendWhatsAppDocument(
             lead._id.toString(),
             lead.mobile,
-            brochureUrl,
-            `${prop.title.replace(/\s+/g, '_')}_Brochure.pdf`,
+            brochure.url,
+            brochure.filename,
             `Brochure for ${prop.title}`
           );
         }, 1000);
@@ -553,7 +545,7 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
     }
     lead.aiContext = lead.aiContext || {};
     lead.aiContext.proposedPropertyId = MOCK_PROPERTY_ID;
-    return `Great news! I found a match: *Aura Premium Heights* at Downtown for â‚¹1.5 Cr.\nAmenities: Gym, Pool.\nBrochure: http://mock-s3.com/brochure.pdf\n\nWould you like to schedule a site visit? Reply with *Yes* or *No*.`;
+    return `Great news! I found a match: *Aura Premium Heights* at Downtown for \u20b91.5 Cr.\nAmenities: Gym, Pool.\n\nWould you like to schedule a site visit? Reply with *Yes* or *No*.`;
   }
 
   if (lead.status === 'Qualified') {
@@ -684,7 +676,7 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
   }
 
   if (lead.status === 'Booked') {
-    return `Welcome to the NextLead family! Your booking is confirmed. We will share construction updates and EMI statements here.`;
+    return `Welcome to the RealtyCloudai family! Your booking is confirmed. We will share construction updates and EMI statements here.`;
   }
 
   return `Hi ${lead.name}, how can I assist you with your real estate needs today?`;

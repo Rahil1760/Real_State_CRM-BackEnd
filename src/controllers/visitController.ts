@@ -1,4 +1,4 @@
-﻿import { Response } from 'express';
+import { Response } from 'express';
 import { TenantRequest } from '../middleware/tenant';
 import Visit from '../models/Visit';
 import Lead from '../models/Lead';
@@ -87,7 +87,7 @@ export const createVisit = async (req: TenantRequest, res: Response) => {
     // Trigger alerts
     const msg = `Visit Confirmed: Lead ${lead.name} has scheduled a site visit for property ${property.title} on ${scheduledDate.toLocaleString()}.`;
     await sendWhatsAppText(lead._id.toString(), lead.mobile, `Your visit is confirmed for ${property.title} on ${scheduledDate.toLocaleString()}`);
-    await sendEmail(lead._id.toString(), 'sales-admin@NextLead.com', 'Site Visit Scheduled', msg);
+    await sendEmail(lead._id.toString(), 'sales-admin@realtycloudai.com', 'Site Visit Scheduled', msg);
     await sendSMS(lead._id.toString(), '+15550199', msg);
 
     const io = getIO();
