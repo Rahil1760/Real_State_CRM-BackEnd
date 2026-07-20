@@ -115,51 +115,42 @@ export const unifiedLeadWebhook = async (req: Request, res: Response) => {
       await lead.save();
 
       // 1. Queue AI qualification background job
+      let queueSuccess = false;
       try {
         const qualifyQueue = getQueue('qualify-lead');
         if (qualifyQueue) {
           await qualifyQueue.add('qualify', { leadId: lead._id });
+          queueSuccess = true;
         }
       } catch (queueErr: any) {
         console.warn('[Lead Webhook] Queue error (Redis offline?):', queueErr.message);
       }
 
-      // 2. Direct Welcome Template Dispatch (Ensures immediate WhatsApp send regardless of Redis status)
-      const capturedLeadId = lead._id.toString();
-      const capturedMobile = lead.mobile;
-      const capturedName = lead.name;
-      const capturedTenantId = lead.tenantId;
+      // 2. Direct Welcome Template Dispatch (Fallback if Redis queue is unavailable)
+      if (!queueSuccess) {
+        const capturedLeadId = lead._id.toString();
+        const capturedMobile = lead.mobile;
+        const capturedName = lead.name;
+        const capturedTenantId = lead.tenantId;
 
-      setImmediate(async () => {
-        try {
-          const tenantObj = await Tenant.findById(capturedTenantId);
-          const welcomeTemplate = tenantObj?.whatsappWelcomeTemplateName || 'welcome_massage';
-          const firstName = capturedName ? capturedName.split(' ')[0] : 'there';
+        setImmediate(async () => {
+          try {
+            const tenantObj = await Tenant.findById(capturedTenantId);
+            const welcomeTemplate = tenantObj?.whatsappWelcomeTemplateName || 'welcome_massage';
+            const firstName = capturedName ? capturedName.split(' ')[0] : 'there';
 
-          let success = await sendWhatsAppTemplate(
-            capturedLeadId,
-            capturedMobile,
-            welcomeTemplate,
-            [{ type: 'text', text: firstName }]
-          );
-
-          if (!success) {
-            const fallbackTemplates = ['welcome_massage', 'welcome_message', 'lead_welcome_v1'].filter(t => t !== welcomeTemplate);
-            for (const fallback of fallbackTemplates) {
-              console.log(`[Lead Webhook Direct] Retrying welcome template fallback to '${fallback}'...`);
-              const fallbackSuccess = await sendWhatsAppTemplate(
-                capturedLeadId,
-                capturedMobile,
-                fallback,
-                [{ type: 'text', text: firstName }]
-              );
-              if (fallbackSuccess) break;
-            }
+            await sendWhatsAppTemplate(
+              capturedLeadId,
+              capturedMobile,
+              welcomeTemplate,
+              [{ type: 'text', text: firstName }],
+              'en_US'
+            );
+          } catch (dispatchErr: any) {
+            console.error('[Lead Webhook Direct] Failed to send welcome template:', dispatchErr.message);
           }
-        } catch (dispatchErr: any) {
-          console.error('[Lead Webhook Direct] Failed to send welcome template:', dispatchErr.message);
-        }
-      });
+        });
+      }
 
       const io = getIO();
       if (io) {

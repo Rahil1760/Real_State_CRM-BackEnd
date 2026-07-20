@@ -44,6 +44,8 @@ export interface ILead extends Document {
     proposedSlots?: string[];
     selectedVisitDay?: string;
     selectedVisitPeriod?: string;
+    welcomeSent?: boolean;
+    welcomeSentAt?: Date;
   };
   chatHistory: IChatMessage[];
   createdAt: Date;
@@ -111,6 +113,8 @@ const LeadSchema: Schema = new Schema(
       proposedSlots: { type: [String], default: [] },
       selectedVisitDay: { type: String, default: '' },
       selectedVisitPeriod: { type: String, default: '' },
+      welcomeSent: { type: Boolean, default: false },
+      welcomeSentAt: { type: Date },
     },
     chatHistory: [
       {

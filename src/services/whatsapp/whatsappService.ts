@@ -213,14 +213,28 @@ export const sendWhatsAppText = async (leadId: string, to: string, text: string,
   }
 };
 
+export interface TemplateInfo {
+  language: string;
+  paramCount: number;
+}
+
+export const TEMPLATE_REGISTRY: Record<string, TemplateInfo> = {
+  ashiyana: { language: 'en', paramCount: 0 },
+  visit_confirmation: { language: 'en', paramCount: 3 },
+  welcome_massage: { language: 'en', paramCount: 1 },
+  welcome_message: { language: 'en', paramCount: 1 },
+  hello_world: { language: 'en_US', paramCount: 0 },
+};
+
 export const sendWhatsAppTemplate = async (
   leadId: string,
   to: string,
   templateName: string,
   parameters: Array<{ type: string; text?: string; image?: { link: string }; document?: { link: string; filename: string } }> = [],
-  languageCode: string = 'en_US'
+  languageCode: string = 'en'
 ): Promise<boolean> => {
   let tenantId: any = null;
+  let welcomeGuardAcquired = false;
   try {
     const formattedTo = formatWhatsAppNumber(to);
     let textSummary = `Sent Template: ${templateName}`;
@@ -229,7 +243,34 @@ export const sendWhatsAppTemplate = async (
       textSummary += ` [Vars: ${details}]`;
     }
 
-    console.log(`[WhatsApp Template Dispatch] Outbox -> To: ${formattedTo} (raw: ${to}), Template: ${templateName}, Lang: ${languageCode}`);
+    // Resolve template language & parameter strategy using registry if available
+    const registryEntry = TEMPLATE_REGISTRY[templateName];
+    let effectiveLang = languageCode;
+
+    if (registryEntry) {
+      effectiveLang = registryEntry.language;
+      if (languageCode !== 'en' && languageCode !== registryEntry.language) {
+        console.warn(`[WhatsApp Template] Warning: caller specified lang "${languageCode}" but template "${templateName}" is registered with lang "${registryEntry.language}". Overriding with registered language.`);
+      }
+    }
+
+    console.log(`[WhatsApp Template Dispatch] Outbox -> To: ${formattedTo} (raw: ${to}), Template: ${templateName}, Lang: ${effectiveLang}`);
+
+    // Atomic guard for welcome templates to prevent duplicate dispatches across queue workers and direct webhooks
+    const isWelcomeTemplate = templateName.startsWith('welcome_') || templateName.includes('welcome') || templateName === 'hello_world';
+
+    if (isWelcomeTemplate && leadId) {
+      const updatedLead = await Lead.findOneAndUpdate(
+        { _id: leadId, 'aiContext.welcomeSent': { $ne: true } },
+        { $set: { 'aiContext.welcomeSent': true, 'aiContext.welcomeSentAt': new Date() } }
+      );
+
+      if (!updatedLead) {
+        console.log(`[WhatsApp Template Dispatch] SKIPPING duplicate welcome template "${templateName}" for lead ${leadId} (already sent).`);
+        return true;
+      }
+      welcomeGuardAcquired = true;
+    }
 
     // Fetch Lead to get tenantId
     const lead = leadId ? await Lead.findById(leadId) : null;
@@ -269,90 +310,77 @@ export const sendWhatsAppTemplate = async (
         });
       }
 
-      // 2. Body parameters go second
-      const bodyParams = parameters.filter(p => p.type === 'text');
-      if (bodyParams.length > 0) {
-        formattedComponents.push({
-          type: 'body',
-          parameters: bodyParams.map(p => ({ type: 'text', text: p.text })),
-        });
+      // 2. Body parameters go second (skip if registry explicitly specifies paramCount === 0)
+      const shouldIncludeBodyParams = registryEntry ? registryEntry.paramCount > 0 : true;
+      if (shouldIncludeBodyParams) {
+        const bodyParams = parameters.filter(p => p.type === 'text');
+        if (bodyParams.length > 0) {
+          formattedComponents.push({
+            type: 'body',
+            parameters: bodyParams.map(p => ({ type: 'text', text: p.text })),
+          });
+        }
       }
 
-      const buildPayload = (lang: string) => {
+      const postWithFallbackParams = async (tName: string, lang: string, comps: any[], hasRetriedParams: boolean = false): Promise<any> => {
         const payload: any = {
           messaging_product: 'whatsapp',
           recipient_type: 'individual',
           to: formattedTo,
           type: 'template',
           template: {
-            name: templateName,
+            name: tName,
             language: { code: lang },
           },
         };
-        if (formattedComponents.length > 0) {
-          payload.template.components = formattedComponents;
+        if (comps && comps.length > 0) {
+          payload.template.components = comps;
         }
-        return payload;
-      };
 
-      try {
-        await axios.post(
-          apiUrl,
-          buildPayload(languageCode),
-          {
+        try {
+          console.log(payload);
+          return await axios.post(apiUrl, payload, {
             headers: {
               Authorization: `Bearer ${whatsappToken}`,
               'Content-Type': 'application/json',
             },
-          }
-        );
-      } catch (postError: any) {
-        const errCode = postError.response?.data?.error?.code;
-        // If error 132001 (Template not found in language/workspace), try language fallback (en_US <-> en) or template alias
-        if (errCode === 132001) {
-          const fallbackLang = languageCode === 'en_US' ? 'en' : 'en_US';
-          console.log(`[WhatsApp Template] Retrying template "${templateName}" with fallback language "${fallbackLang}"...`);
-          try {
-            await axios.post(
-              apiUrl,
-              buildPayload(fallbackLang),
-              {
-                headers: {
-                  Authorization: `Bearer ${whatsappToken}`,
-                  'Content-Type': 'application/json',
-                },
-              }
-            );
-          } catch (langErr: any) {
-            // Check if template name alias fallback applies (e.g. welcome_massage <-> welcome_message)
-            let altTemplateName: string | null = null;
-            if (templateName === 'welcome_massage') altTemplateName = 'welcome_message';
-            else if (templateName === 'welcome_message') altTemplateName = 'welcome_massage';
+          });
+        } catch (err: any) {
+          const errCode = err.response?.data?.error?.code;
+          const details: string = err.response?.data?.error?.error_data?.details || err.response?.data?.error?.message || '';
 
-            if (altTemplateName) {
-              console.log(`[WhatsApp Template] Retrying with template alias "${altTemplateName}"...`);
-              const altPayload = {
-                ...buildPayload(languageCode),
-                template: { name: altTemplateName, language: { code: languageCode } }
-              };
-              await axios.post(
-                apiUrl,
-                altPayload,
-                {
-                  headers: {
-                    Authorization: `Bearer ${whatsappToken}`,
-                    'Content-Type': 'application/json',
-                  },
+          // Error 132000: Number of parameters does not match expected number of params
+          if (errCode === 132000 && !hasRetriedParams) {
+            const match = details.match(/expected number of params \((\d+)\)/i);
+            const expectedCount = match ? parseInt(match[1], 10) : 0;
+
+            console.log(`[WhatsApp Template] Parameter mismatch (#132000) for template "${tName}". Meta expected: ${expectedCount}. Adjusting parameters and retrying...`);
+
+            let adjustedComps: any[] = [];
+            if (expectedCount > 0) {
+              const textComps: any[] = comps ? comps.filter((c: any) => c.type === 'body') : [];
+              const existingParams = textComps[0]?.parameters || [];
+              const newParams = [];
+              const defaultFallbacks = ['there', 'RealtyCloudai', 'our platform', 'Property'];
+
+              for (let i = 0; i < expectedCount; i++) {
+                if (existingParams[i]) {
+                  newParams.push(existingParams[i]);
+                } else {
+                  newParams.push({ type: 'text', text: defaultFallbacks[i] || 'info' });
                 }
-              );
-            } else {
-              throw langErr;
+              }
+              adjustedComps = [{ type: 'body', parameters: newParams }];
             }
+
+            return await postWithFallbackParams(tName, lang, adjustedComps, true);
           }
-        } else {
-          throw postError;
+          throw err;
         }
-      }
+      };
+
+      const res = await postWithFallbackParams(templateName, effectiveLang, formattedComponents);
+      console.log('[WhatsApp Template] Meta response:', JSON.stringify(res?.data));
     }
 
     // ON SUCCESS (real API post succeeded, or mock mode)
@@ -412,6 +440,12 @@ export const sendWhatsAppTemplate = async (
 
     return true;
   } catch (error: any) {
+    if (welcomeGuardAcquired && leadId) {
+      try {
+        await Lead.findByIdAndUpdate(leadId, { $set: { 'aiContext.welcomeSent': false } });
+      } catch (e) { }
+    }
+
     const metaErrorDetails = error.response?.data?.error?.error_data?.details || error.response?.data?.error?.message || error.message;
     console.error('Error sending WhatsApp template:', JSON.stringify(error.response?.data || error.message, null, 2));
 
@@ -458,10 +492,10 @@ export const sendWhatsAppTemplate = async (
 };
 
 export const sendWhatsAppDocument = async (
-  leadId: string, 
-  to: string, 
-  documentUrl: string, 
-  filename: string, 
+  leadId: string,
+  to: string,
+  documentUrl: string,
+  filename: string,
   caption?: string,
   tenantIdOverride?: string
 ): Promise<boolean> => {
@@ -552,7 +586,7 @@ export const sendWhatsAppDocument = async (
     return true;
   } catch (error: any) {
     console.error('Error sending WhatsApp document:', error.response?.data || error.message);
-    
+
     // Resolve tenantId
     let tenantId;
     try {

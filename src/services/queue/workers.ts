@@ -47,29 +47,15 @@ export const initWorkers = () => {
         const welcomeTemplate = tenantObj?.whatsappWelcomeTemplateName || 'welcome_massage';
 
         const firstName = lead.name ? lead.name.split(' ')[0] : 'there';
-        let success = await sendWhatsAppTemplate(
+        await sendWhatsAppTemplate(
           lead._id.toString(),
           lead.mobile,
           welcomeTemplate,
           [
             { type: 'text', text: firstName }
-          ]
+          ],
+          'en_US'
         );
-        if (!success) {
-          const fallbackTemplates = ['welcome_massage', 'welcome_message', 'lead_welcome_v1'].filter(t => t !== welcomeTemplate);
-          for (const fallback of fallbackTemplates) {
-            console.log(`[Qualify Worker] Retrying welcome template fallback to '${fallback}'...`);
-            const fallbackSuccess = await sendWhatsAppTemplate(
-              lead._id.toString(),
-              lead.mobile,
-              fallback,
-              [
-                { type: 'text', text: firstName }
-              ]
-            );
-            if (fallbackSuccess) break;
-          }
-        }
       } else if (job.name === 'conversation-turn') {
         // Run AI text analysis turn
         await processAIConversation(leadId, message);
