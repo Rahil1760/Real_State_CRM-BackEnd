@@ -598,9 +598,20 @@ export const processNormalizedInboundMessage = async (payload: {
 }): Promise<any> => {
   const { tenantId, leadName, message, timestamp, source } = payload;
   const cleanPhone = formatWhatsAppNumber(payload.leadPhone);
+  const last10 = cleanPhone.slice(-10);
   console.log(`[Normalized Inbound WhatsApp] Tenant: ${tenantId}, Lead: ${cleanPhone} (raw: ${payload.leadPhone}), Source: ${source}, Text: "${message}"`);
 
-  let lead = await Lead.findOne({ tenantId, mobile: cleanPhone });
+  let lead = await Lead.findOne({
+    tenantId,
+    $or: [
+      { mobile: cleanPhone },
+      { mobile: last10 },
+      { mobile: `+${cleanPhone}` },
+      { mobile: `0${last10}` },
+      { mobile: `91${last10}` }
+    ]
+  }).sort({ updatedAt: -1 });
+
   if (!lead) {
     lead = new Lead({
       tenantId,
@@ -610,6 +621,12 @@ export const processNormalizedInboundMessage = async (payload: {
       status: 'New',
       chatHistory: [],
     });
+  } else {
+    // Normalize mobile to cleanPhone so future lookups are instant
+    lead.mobile = cleanPhone;
+    if (leadName && (!lead.name || lead.name === 'Anonymous' || lead.name.startsWith('WhatsApp Lead'))) {
+      lead.name = leadName;
+    }
   }
 
   lead.chatHistory.push({

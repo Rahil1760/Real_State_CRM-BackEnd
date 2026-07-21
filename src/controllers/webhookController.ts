@@ -302,7 +302,15 @@ export const receiveWhatsApp = async (req: Request, res: Response) => {
     }
 
     // Clean number to search in DB
-    const cleanFrom = from.replace(/\s+/g, '').replace(/[-+]/g, '');
+    const cleanFrom = formatWhatsAppNumber(from);
+    const last10 = cleanFrom.slice(-10);
+    const mobileOrQuery = [
+      { mobile: cleanFrom },
+      { mobile: last10 },
+      { mobile: `+${cleanFrom}` },
+      { mobile: `0${last10}` },
+      { mobile: `91${last10}` }
+    ];
 
     // Resolve tenantId
     let tenantId = (req.query.tenantId as string) || (req.headers['x-tenant-id'] as string);
@@ -319,7 +327,7 @@ export const receiveWhatsApp = async (req: Request, res: Response) => {
 
     // Try resolving by existing lead mobile number
     if (!tenantId) {
-      const existingLead = await Lead.findOne({ mobile: cleanFrom }).sort({ updatedAt: -1 });
+      const existingLead = await Lead.findOne({ $or: mobileOrQuery }).sort({ updatedAt: -1 });
       if (existingLead) {
         tenantId = existingLead.tenantId.toString();
         console.log(`[WhatsApp Webhook] Resolved tenantId (${tenantId}) from existing lead mobile: ${cleanFrom}`);
@@ -341,8 +349,8 @@ export const receiveWhatsApp = async (req: Request, res: Response) => {
       return res.status(200).send('EVENT_RECEIVED');
     }
 
-    // Search for lead
-    let lead = await Lead.findOne({ tenantId, mobile: cleanFrom });
+    // Search for lead using multi-format query
+    let lead = await Lead.findOne({ tenantId, $or: mobileOrQuery }).sort({ updatedAt: -1 });
 
     if (!lead) {
       // Check if lead limit is reached before creating!

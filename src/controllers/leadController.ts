@@ -4,6 +4,7 @@ import Lead from '../models/Lead';
 import BaseRepository from '../repositories/BaseRepository';
 import { getIO } from '../services/socket/socketService';
 import { getQueue } from '../services/queue/queueConfig';
+import { formatWhatsAppNumber } from '../services/whatsapp/whatsappService';
 
 const leadRepository = new BaseRepository(Lead);
 
@@ -73,10 +74,23 @@ export const createLead = async (req: TenantRequest, res: Response) => {
       return res.status(400).json({ message: 'Mobile number is required' });
     }
 
-    // Scope unique check to active tenant
-    let lead = await leadRepository.findOne(tenantId, { mobile });
+    const cleanMobile = formatWhatsAppNumber(mobile);
+    const last10 = cleanMobile.slice(-10);
+
+    // Scope unique check to active tenant with multi-format matching
+    let lead = await Lead.findOne({
+      tenantId,
+      $or: [
+        { mobile: cleanMobile },
+        { mobile: last10 },
+        { mobile: `+${cleanMobile}` },
+        { mobile: `0${last10}` },
+        { mobile: `91${last10}` }
+      ]
+    }).sort({ updatedAt: -1 });
 
     if (lead) {
+      lead.mobile = cleanMobile; // normalize to canonical format
       lead.name = name || lead.name;
       lead.email = email || lead.email;
       lead.budget = budget || lead.budget;
@@ -104,7 +118,7 @@ export const createLead = async (req: TenantRequest, res: Response) => {
     } else {
       lead = await leadRepository.create(tenantId, {
         name,
-        mobile,
+        mobile: cleanMobile,
         email,
         source,
         budget,
