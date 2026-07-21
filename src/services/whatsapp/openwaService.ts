@@ -221,7 +221,14 @@ export const initBaileysSession = async (tenantId: string, forceFresh: boolean =
           for (const msg of m.messages) {
             if (!msg.key.fromMe && msg.message) {
               const fromJid = msg.key.remoteJid || '';
-              const cleanPhone = fromJid.split('@')[0];
+
+              // Ignore group messages and broadcast status updates
+              if (fromJid.endsWith('@g.us') || fromJid.includes('broadcast') || fromJid.includes('status')) {
+                continue;
+              }
+
+              const rawPhone = fromJid.split('@')[0].split(':')[0];
+              const cleanPhone = formatWhatsAppNumber(rawPhone);
               const text =
                 msg.message.conversation ||
                 msg.message.extendedTextMessage?.text ||

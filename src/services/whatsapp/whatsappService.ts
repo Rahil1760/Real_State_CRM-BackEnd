@@ -14,7 +14,7 @@ import { analyzeFeedbackSentiment } from '../ai/llmProviderService';
 
 export const formatWhatsAppNumber = (phone: string): string => {
   if (!phone) return '';
-  let cleaned = phone.replace(/\D/g, ''); // strip non-digits
+  let cleaned = String(phone).split('@')[0].split(':')[0].replace(/\D/g, ''); // strip JID/device suffixes & non-digits
   if (cleaned.startsWith('0')) {
     cleaned = cleaned.substring(1);
   }
