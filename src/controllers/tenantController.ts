@@ -108,33 +108,58 @@ export const updateTenantProfile = async (req: any, res: Response) => {
       return res.status(404).json({ message: 'Tenant profile not loaded' });
     }
 
-    const { whatsappPhoneId, whatsappToken, whatsappWelcomeTemplateName, senderDisplayName, marketingSpend, marketingSpendBreakdown } = req.body;
+    const {
+      whatsappPhoneId,
+      whatsappToken,
+      whatsappProvider,
+      metaConfig,
+      openwaConfig,
+      whatsappWelcomeTemplateName,
+      senderDisplayName,
+      marketingSpend,
+      marketingSpendBreakdown,
+    } = req.body;
 
     const tenant = await Tenant.findById(req.tenant._id);
     if (!tenant) {
       return res.status(404).json({ message: 'Tenant not found' });
     }
 
-    if (whatsappPhoneId !== undefined) {
-      const trimmedPhoneId = whatsappPhoneId.trim();
-      if (!trimmedPhoneId) {
-        return res.status(400).json({ message: 'WhatsApp Phone ID is required and cannot be empty.' });
-      }
-      if (!/^\d{15,18}$/.test(trimmedPhoneId)) {
-        return res.status(400).json({ message: 'Invalid WhatsApp Phone ID. It must be a 15 to 18-digit number.' });
-      }
-      tenant.whatsappPhoneId = trimmedPhoneId;
+    if (whatsappProvider !== undefined && ['meta', 'openwa'].includes(whatsappProvider)) {
+      tenant.whatsappProvider = whatsappProvider;
     }
 
-    if (whatsappToken !== undefined) {
+    if (metaConfig !== undefined) {
+      tenant.metaConfig = {
+        phoneNumberId: metaConfig.phoneNumberId || tenant.metaConfig?.phoneNumberId || '',
+        accessToken: metaConfig.accessToken || tenant.metaConfig?.accessToken || '',
+        businessAccountId: metaConfig.businessAccountId || tenant.metaConfig?.businessAccountId || '',
+      };
+      if (metaConfig.phoneNumberId) tenant.whatsappPhoneId = metaConfig.phoneNumberId;
+      if (metaConfig.accessToken) tenant.whatsappToken = metaConfig.accessToken;
+    }
+
+    if (openwaConfig !== undefined) {
+      tenant.openwaConfig = {
+        sessionId: openwaConfig.sessionId || tenant.openwaConfig?.sessionId || '',
+        qrCode: openwaConfig.qrCode || tenant.openwaConfig?.qrCode || '',
+        isConnected: Boolean(openwaConfig.isConnected),
+        lastSeen: openwaConfig.lastSeen ? new Date(openwaConfig.lastSeen) : tenant.openwaConfig?.lastSeen || new Date(),
+      };
+    }
+
+    if (whatsappPhoneId !== undefined && !metaConfig?.phoneNumberId) {
+      const trimmedPhoneId = whatsappPhoneId.trim();
+      if (trimmedPhoneId) {
+        tenant.whatsappPhoneId = trimmedPhoneId;
+      }
+    }
+
+    if (whatsappToken !== undefined && !metaConfig?.accessToken) {
       const trimmedToken = whatsappToken.trim();
-      if (!trimmedToken) {
-        return res.status(400).json({ message: 'Access Token is required and cannot be empty.' });
+      if (trimmedToken) {
+        tenant.whatsappToken = trimmedToken;
       }
-      if (!/^EA[a-zA-Z0-9_-]+$/.test(trimmedToken)) {
-        return res.status(400).json({ message: 'Invalid Access Token. It must be a valid Meta Access Token starting with "EA".' });
-      }
-      tenant.whatsappToken = trimmedToken;
     }
     if (whatsappWelcomeTemplateName !== undefined) tenant.whatsappWelcomeTemplateName = String(whatsappWelcomeTemplateName).trim() || 'welcome_massage';
     if (senderDisplayName !== undefined) tenant.senderDisplayName = senderDisplayName;

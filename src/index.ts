@@ -67,12 +67,15 @@ app.get('/', (req: Request, res: Response) => {
   res.send('Hello World');
 });
 
+import openwaRouter from './routes/openwaRoutes';
+
 // 1. Public & Global Platform routes
 app.use('/api/auth', authRouter);
 app.use('/api/tenants', tenantsRouter);
 app.use('/api/superadmin', superadminRouter);
 app.use('/api/billing', billingRouter);
 app.use('/api/webhooks', webhooksRouter);
+app.use('/api/openwa', openwaRouter);
 
 // 2. Multi-Tenant Isolated Pipeline routes (Auto-inject req.tenant)
 app.use('/api/leads', tenantMiddleware as any, leadsRouter);

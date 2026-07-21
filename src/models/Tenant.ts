@@ -17,6 +17,18 @@ export interface ITenant extends Document {
   maxProperties: number;
   whatsappPhoneId?: string; // encrypted
   whatsappToken?: string;   // encrypted
+  whatsappProvider?: 'meta' | 'openwa';
+  metaConfig?: {
+    phoneNumberId?: string;
+    accessToken?: string;
+    businessAccountId?: string;
+  };
+  openwaConfig?: {
+    sessionId?: string;
+    qrCode?: string;
+    isConnected?: boolean;
+    lastSeen?: Date;
+  };
   razorpayKeyId?: string;
   razorpaySecret?: string;
   whatsappWelcomeTemplateName?: string;
@@ -70,6 +82,22 @@ const TenantSchema: Schema = new Schema(
       type: String,
       get: (val: string) => val ? decrypt(val) : val,
       set: (val: string) => val ? encrypt(val) : val
+    },
+    whatsappProvider: {
+      type: String,
+      enum: ['meta', 'openwa'],
+      default: 'meta',
+    },
+    metaConfig: {
+      phoneNumberId: { type: String, default: '' },
+      accessToken: { type: String, default: '' },
+      businessAccountId: { type: String, default: '' },
+    },
+    openwaConfig: {
+      sessionId: { type: String, default: '' },
+      qrCode: { type: String, default: '' },
+      isConnected: { type: Boolean, default: false },
+      lastSeen: { type: Date, default: null },
     },
     razorpayKeyId: { type: String },
     razorpaySecret: { type: String },

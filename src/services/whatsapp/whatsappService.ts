@@ -62,6 +62,8 @@ export const resolvePropertyBrochure = async (property: any): Promise<{ url: str
   return { url: fullUrl, filename };
 };
 
+import { getWhatsAppProvider } from './whatsappFactory';
+
 export const sendWhatsAppText = async (leadId: string, to: string, text: string, skipHistoryLog: boolean = false, tenantIdOverride?: string): Promise<boolean> => {
   let tenantId: any = null;
   try {
@@ -82,37 +84,8 @@ export const sendWhatsAppText = async (leadId: string, to: string, text: string,
       }
     }
 
-    const whatsappToken = tenant?.whatsappToken || process.env.WHATSAPP_TOKEN;
-    const whatsappPhoneId = tenant?.whatsappPhoneId || process.env.WHATSAPP_PHONE_ID;
-    const apiUrl = `https://graph.facebook.com/v18.0/${whatsappPhoneId}/messages`;
-
-    const isMock = !whatsappToken || !whatsappPhoneId || whatsappToken.startsWith('mock');
-
-    if (!isMock) {
-      console.log("========== WHATSAPP DEBUG ==========");
-      console.log("Phone ID:", whatsappPhoneId);
-      console.log("Token:", whatsappToken?.substring(0, 20) + "...");
-      console.log("API URL:", apiUrl);
-      console.log("To:", formattedTo);
-      console.log("====================================");
-
-      await axios.post(
-        apiUrl,
-        {
-          messaging_product: 'whatsapp',
-          recipient_type: 'individual',
-          to: formattedTo,
-          type: 'text',
-          text: { preview_url: false, body: text },
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${whatsappToken}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-    }
+    const provider = await getWhatsAppProvider(tenantId?.toString() || tenantId);
+    await provider.sendText(to, text);
 
     // ON SUCCESS (real API post succeeded, or mock mode)
     const notification = new Notification({
@@ -286,102 +259,8 @@ export const sendWhatsAppTemplate = async (
       }
     }
 
-    const whatsappToken = tenant?.whatsappToken || process.env.WHATSAPP_TOKEN;
-    const whatsappPhoneId = tenant?.whatsappPhoneId || process.env.WHATSAPP_PHONE_ID;
-    const apiUrl = `https://graph.facebook.com/v18.0/${whatsappPhoneId}/messages`;
-
-    const isMock = !whatsappToken || !whatsappPhoneId || whatsappToken.startsWith('mock');
-
-    if (isMock) {
-      console.warn(`[WhatsApp Template Dispatch] WARNING: WhatsApp Token ("${whatsappToken || 'MISSING'}") or Phone ID ("${whatsappPhoneId || 'MISSING'}") is missing or mock. Live message NOT sent to Meta API.`);
-    } else {
-      const formattedComponents: any[] = [];
-
-      // 1. Header Media goes first
-      const headerMedia = parameters.find(p => p.type === 'image' || p.type === 'document');
-      if (headerMedia) {
-        formattedComponents.push({
-          type: 'header',
-          parameters: [
-            headerMedia.type === 'image'
-              ? { type: 'image', image: { link: headerMedia.image?.link } }
-              : { type: 'document', document: { link: headerMedia.document?.link, filename: headerMedia.document?.filename } }
-          ],
-        });
-      }
-
-      // 2. Body parameters go second (skip if registry explicitly specifies paramCount === 0)
-      const shouldIncludeBodyParams = registryEntry ? registryEntry.paramCount > 0 : true;
-      if (shouldIncludeBodyParams) {
-        const bodyParams = parameters.filter(p => p.type === 'text');
-        if (bodyParams.length > 0) {
-          formattedComponents.push({
-            type: 'body',
-            parameters: bodyParams.map(p => ({ type: 'text', text: p.text })),
-          });
-        }
-      }
-
-      const postWithFallbackParams = async (tName: string, lang: string, comps: any[], hasRetriedParams: boolean = false): Promise<any> => {
-        const payload: any = {
-          messaging_product: 'whatsapp',
-          recipient_type: 'individual',
-          to: formattedTo,
-          type: 'template',
-          template: {
-            name: tName,
-            language: { code: lang },
-          },
-        };
-        if (comps && comps.length > 0) {
-          payload.template.components = comps;
-        }
-
-        try {
-          console.log(payload);
-          return await axios.post(apiUrl, payload, {
-            headers: {
-              Authorization: `Bearer ${whatsappToken}`,
-              'Content-Type': 'application/json',
-            },
-          });
-        } catch (err: any) {
-          const errCode = err.response?.data?.error?.code;
-          const details: string = err.response?.data?.error?.error_data?.details || err.response?.data?.error?.message || '';
-
-          // Error 132000: Number of parameters does not match expected number of params
-          if (errCode === 132000 && !hasRetriedParams) {
-            const match = details.match(/expected number of params \((\d+)\)/i);
-            const expectedCount = match ? parseInt(match[1], 10) : 0;
-
-            console.log(`[WhatsApp Template] Parameter mismatch (#132000) for template "${tName}". Meta expected: ${expectedCount}. Adjusting parameters and retrying...`);
-
-            let adjustedComps: any[] = [];
-            if (expectedCount > 0) {
-              const textComps: any[] = comps ? comps.filter((c: any) => c.type === 'body') : [];
-              const existingParams = textComps[0]?.parameters || [];
-              const newParams = [];
-              const defaultFallbacks = ['there', 'RealtyCloudai', 'our platform', 'Property'];
-
-              for (let i = 0; i < expectedCount; i++) {
-                if (existingParams[i]) {
-                  newParams.push(existingParams[i]);
-                } else {
-                  newParams.push({ type: 'text', text: defaultFallbacks[i] || 'info' });
-                }
-              }
-              adjustedComps = [{ type: 'body', parameters: newParams }];
-            }
-
-            return await postWithFallbackParams(tName, lang, adjustedComps, true);
-          }
-          throw err;
-        }
-      };
-
-      const res = await postWithFallbackParams(templateName, effectiveLang, formattedComponents);
-      console.log('[WhatsApp Template] Meta response:', JSON.stringify(res?.data));
-    }
+    const provider = await getWhatsAppProvider(tenantId?.toString() || tenantId);
+    await provider.sendTemplate(to, templateName, parameters, effectiveLang);
 
     // ON SUCCESS (real API post succeeded, or mock mode)
     const notification = new Notification({
@@ -557,32 +436,8 @@ export const sendWhatsAppDocument = async (
       }
     }
 
-    // Attempt real dispatch if API keys exist
-    if (whatsappToken && whatsappPhoneId && !whatsappToken.startsWith('mock')) {
-      const formattedTo = formatWhatsAppNumber(to);
-      await axios.post(
-        apiUrl,
-        {
-          messaging_product: 'whatsapp',
-          recipient_type: 'individual',
-          to: formattedTo,
-          type: 'document',
-          document: {
-            link: documentUrl,
-            filename,
-            ...(caption ? { caption } : {}),
-          },
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${whatsappToken}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-      return true;
-    }
-
+    const provider = await getWhatsAppProvider(tenantId?.toString() || tenantId);
+    await provider.sendDocument(to, documentUrl, filename, caption);
     return true;
   } catch (error: any) {
     console.error('Error sending WhatsApp document:', error.response?.data || error.message);
