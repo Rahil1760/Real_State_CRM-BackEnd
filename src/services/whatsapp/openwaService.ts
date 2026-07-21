@@ -222,7 +222,18 @@ export const initBaileysSession = async (tenantId: string, forceFresh: boolean =
             if (!msg.key.fromMe && msg.message) {
               const fromJid = msg.key.remoteJid || '';
               const cleanPhone = fromJid.split('@')[0];
-              const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+              const text =
+                msg.message.conversation ||
+                msg.message.extendedTextMessage?.text ||
+                msg.message.ephemeralMessage?.message?.conversation ||
+                msg.message.ephemeralMessage?.message?.extendedTextMessage?.text ||
+                msg.message.buttonsResponseMessage?.selectedButtonId ||
+                msg.message.buttonsResponseMessage?.selectedDisplayText ||
+                msg.message.listResponseMessage?.singleSelectReply?.selectedRowId ||
+                msg.message.listResponseMessage?.title ||
+                msg.message.imageMessage?.caption ||
+                msg.message.videoMessage?.caption ||
+                '';
               const pushName = msg.pushName || 'WhatsApp User';
 
               if (text && cleanPhone) {
@@ -474,16 +485,30 @@ export const logoutOpenWA = async (tenantId: string): Promise<any> => {
   return { message: 'OpenWA session logged out successfully', status: 'disconnected' };
 };
 
+import { getQueue } from '../queue/queueConfig';
+import { processIncomingMessage } from '../ai/aiService';
+
 export const sendOpenWAText = async (tenantId: string, to: string, message: string): Promise<any> => {
   const formattedTo = formatWhatsAppNumber(to);
   const status = await getOpenWAStatus(tenantId);
 
   console.log(`[OpenWA Dispatch] Tenant ${tenantId} -> To: ${formattedTo}, Msg: "${message}" (Status: ${status.status})`);
 
-  const sock = socketsMap.get(tenantId);
+  let sock = socketsMap.get(tenantId);
+  if (!sock) {
+    console.log(`[OpenWA Dispatch] Socket not in memory for tenant ${tenantId}. Attempting re-initialization...`);
+    try {
+      sock = await initBaileysSession(tenantId, false);
+    } catch (e: any) {
+      console.error(`[OpenWA Dispatch Error] Failed to restore socket for tenant ${tenantId}:`, e.message);
+    }
+  }
+
   if (sock) {
     const jid = `${formattedTo}@s.whatsapp.net`;
     await sock.sendMessage(jid, { text: message }).catch((err: any) => console.error('[Baileys sendText error]:', err.message));
+  } else {
+    console.error(`[OpenWA Dispatch Error] Socket unavailable for tenant ${tenantId}. Message could not be sent to ${formattedTo}.`);
   }
 
   return {
@@ -505,7 +530,13 @@ export const sendOpenWADocument = async (
   const formattedTo = formatWhatsAppNumber(to);
   console.log(`[OpenWA Document Dispatch] Tenant ${tenantId} -> To: ${formattedTo}, Document: ${filename} (${documentUrl})`);
 
-  const sock = socketsMap.get(tenantId);
+  let sock = socketsMap.get(tenantId);
+  if (!sock) {
+    try {
+      sock = await initBaileysSession(tenantId, false);
+    } catch (e: any) {}
+  }
+
   if (sock) {
     const jid = `${formattedTo}@s.whatsapp.net`;
     await sock
@@ -531,7 +562,13 @@ export const sendOpenWAImage = async (tenantId: string, to: string, imageUrl: st
   const formattedTo = formatWhatsAppNumber(to);
   console.log(`[OpenWA Image Dispatch] Tenant ${tenantId} -> To: ${formattedTo}, Image: ${imageUrl}`);
 
-  const sock = socketsMap.get(tenantId);
+  let sock = socketsMap.get(tenantId);
+  if (!sock) {
+    try {
+      sock = await initBaileysSession(tenantId, false);
+    } catch (e: any) {}
+  }
+
   if (sock) {
     const jid = `${formattedTo}@s.whatsapp.net`;
     await sock
@@ -550,8 +587,6 @@ export const sendOpenWAImage = async (tenantId: string, to: string, imageUrl: st
     caption,
   };
 };
-
-import { getQueue } from '../queue/queueConfig';
 
 export const processNormalizedInboundMessage = async (payload: {
   tenantId: string;
@@ -597,6 +632,7 @@ export const processNormalizedInboundMessage = async (payload: {
     });
   }
 
+  let queueSuccess = false;
   try {
     const qualifyQueue = getQueue('qualify-lead');
     if (qualifyQueue) {
@@ -606,9 +642,24 @@ export const processNormalizedInboundMessage = async (payload: {
         tenantId,
         source,
       });
+      queueSuccess = true;
     }
   } catch (err: any) {
-    console.error(`[Inbound Processing] Queue error for tenant ${tenantId}:`, err.message);
+    console.warn(`[Inbound Processing] Queue error for tenant ${tenantId} (Redis issue?):`, err.message);
+  }
+
+  // Fallback direct execution if BullMQ queue fails or is unavailable
+  if (!queueSuccess) {
+    const capturedLeadId = lead._id.toString();
+    const capturedMessage = message;
+    setImmediate(async () => {
+      try {
+        console.log(`[Direct Fallback] Processing AI response directly for lead ${capturedLeadId}...`);
+        await processIncomingMessage(capturedLeadId, capturedMessage);
+      } catch (directErr: any) {
+        console.error(`[Direct Fallback Error] AI process failed:`, directErr.message);
+      }
+    });
   }
 
   return { success: true, leadId: lead._id };

@@ -1,4 +1,5 @@
 import Tenant from '../../models/Tenant';
+import OpenWASession from '../../models/OpenWASession';
 import { WhatsAppProvider } from './whatsappProviderInterface';
 import { MetaWhatsAppProvider } from './metaWhatsAppProvider';
 import { OpenWAProvider } from './openwaProvider';
@@ -13,10 +14,17 @@ export class WhatsAppFactory {
       tenant = await Tenant.findOne({});
     }
 
-    const providerType = tenant?.whatsappProvider || 'meta';
+    const resolvedTenantId = tenant ? tenant._id.toString() : (tenantId ? tenantId.toString() : '');
+    let providerType = tenant?.whatsappProvider;
+
+    if (!providerType && resolvedTenantId) {
+      const openwaSession = await OpenWASession.findOne({ tenantId: resolvedTenantId, status: 'connected' });
+      if (openwaSession) {
+        providerType = 'openwa';
+      }
+    }
 
     if (providerType === 'openwa') {
-      const resolvedTenantId = tenant ? tenant._id.toString() : '';
       return new OpenWAProvider(resolvedTenantId);
     }
 
