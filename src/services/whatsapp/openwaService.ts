@@ -561,15 +561,16 @@ export const processNormalizedInboundMessage = async (payload: {
   timestamp: Date;
   source: 'meta' | 'openwa';
 }): Promise<any> => {
-  const { tenantId, leadPhone, leadName, message, timestamp, source } = payload;
-  console.log(`[Normalized Inbound WhatsApp] Tenant: ${tenantId}, Lead: ${leadPhone}, Source: ${source}, Text: "${message}"`);
+  const { tenantId, leadName, message, timestamp, source } = payload;
+  const cleanPhone = formatWhatsAppNumber(payload.leadPhone);
+  console.log(`[Normalized Inbound WhatsApp] Tenant: ${tenantId}, Lead: ${cleanPhone} (raw: ${payload.leadPhone}), Source: ${source}, Text: "${message}"`);
 
-  let lead = await Lead.findOne({ tenantId, mobile: leadPhone });
+  let lead = await Lead.findOne({ tenantId, mobile: cleanPhone });
   if (!lead) {
     lead = new Lead({
       tenantId,
-      name: leadName || `WhatsApp Lead (${leadPhone})`,
-      mobile: leadPhone,
+      name: leadName || `WhatsApp Lead (${cleanPhone})`,
+      mobile: cleanPhone,
       source: `WhatsApp (${source.toUpperCase()})`,
       status: 'New',
       chatHistory: [],
@@ -583,13 +584,26 @@ export const processNormalizedInboundMessage = async (payload: {
 
   await lead.save();
 
+  const io = getIO();
+  if (io) {
+    io.to('/crm').emit('lead:updated', lead);
+    io.to('/crm').emit('whatsapp:message', {
+      leadId: lead._id.toString(),
+      direction: 'inbound',
+      channel: 'WhatsApp',
+      status: 'received',
+      text: message,
+      timestamp: timestamp || new Date(),
+    });
+  }
+
   try {
     const qualifyQueue = getQueue('qualify-lead');
     if (qualifyQueue) {
-      await qualifyQueue.add('qualify-lead', {
+      await qualifyQueue.add('conversation-turn', {
         leadId: lead._id.toString(),
+        message,
         tenantId,
-        userMessage: message,
         source,
       });
     }

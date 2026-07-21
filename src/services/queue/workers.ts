@@ -26,7 +26,8 @@ export const initWorkers = () => {
   const qualifyWorker = new Worker(
     'qualify-lead',
     async (job) => {
-      const { leadId, message } = job.data;
+      const { leadId } = job.data;
+      const message = job.data.message || job.data.userMessage || '';
       const lead = await Lead.findById(leadId);
       if (!lead) return;
 
@@ -56,7 +57,7 @@ export const initWorkers = () => {
           ],
           'en_US'
         );
-      } else if (job.name === 'conversation-turn') {
+      } else if (job.name === 'conversation-turn' || job.name === 'qualify-lead') {
         // Run AI text analysis turn
         await processAIConversation(leadId, message);
       }

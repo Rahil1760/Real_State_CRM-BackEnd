@@ -4,6 +4,7 @@ import Tenant from '../models/Tenant';
 import { getIO } from '../services/socket/socketService';
 import { getQueue } from '../services/queue/queueConfig';
 import { sendWhatsAppText, sendWhatsAppTemplate, formatWhatsAppNumber } from '../services/whatsapp/whatsappService';
+import { processNormalizedInboundMessage } from '../services/whatsapp/openwaService';
 
 // Unified Webhook for Lead Sources (Facebook, Google, Portals, Forms)
 export const unifiedLeadWebhook = async (req: Request, res: Response) => {
@@ -181,13 +182,48 @@ export const verifyWhatsApp = (req: Request, res: Response) => {
   }
 };
 
-// Meta WhatsApp Message Webhook Receiver
+// Meta & OpenWA WhatsApp Message Webhook Receiver
 export const receiveWhatsApp = async (req: Request, res: Response) => {
   console.log("===== WHATSAPP WEBHOOK HIT =====");
   console.log(JSON.stringify(req.body, null, 2));
   try {
     const { entry } = req.body;
     if (!entry || entry.length === 0) {
+      // Check if this is an OpenWA or custom WhatsApp webhook payload
+      const body = req.body || {};
+      const leadPhone = body.leadPhone || body.from || body.phone || body.mobile || body.sender || body.data?.from || body.data?.phone || body.data?.mobile;
+      const textMessage = body.message || body.body || body.text || body.data?.message || body.data?.body || body.data?.text;
+
+      if (leadPhone && textMessage) {
+        let tenantId = body.tenantId || req.query.tenantId || req.headers['x-tenant-id'];
+        if (!tenantId) {
+          const cleanPhone = formatWhatsAppNumber(String(leadPhone));
+          const existingLead = await Lead.findOne({ mobile: cleanPhone }).sort({ updatedAt: -1 });
+          if (existingLead) {
+            tenantId = existingLead.tenantId.toString();
+          }
+        }
+        if (!tenantId) {
+          const defaultTenant = await Tenant.findOne({});
+          if (defaultTenant) {
+            tenantId = defaultTenant._id.toString();
+          }
+        }
+
+        if (tenantId) {
+          const leadName = body.leadName || body.name || body.pushName || body.senderName || body.data?.pushName || 'WhatsApp User';
+          await processNormalizedInboundMessage({
+            tenantId: tenantId.toString(),
+            leadPhone: String(leadPhone),
+            leadName,
+            message: String(textMessage),
+            timestamp: body.timestamp ? new Date(body.timestamp) : new Date(),
+            source: 'openwa',
+          });
+          return res.status(200).send('EVENT_RECEIVED');
+        }
+      }
+
       return res.status(200).send('EVENT_RECEIVED');
     }
 
