@@ -839,6 +839,8 @@ export const processIncomingMessage = async (leadId: string, textMessage: string
 
     if (io) io.to('/crm').emit(streamEvent, { token: limitMessage });
     await sendWhatsAppText(leadId, lead.mobile, limitMessage, true);
+    const ioLimit = getIO();
+    if (ioLimit) ioLimit.to('/crm').emit('lead:updated', lead);
     return;
   }
 
@@ -868,6 +870,19 @@ export const processIncomingMessage = async (leadId: string, textMessage: string
       const firstName = lead.name ? lead.name.split(' ')[0] : '';
       aiResponse = firstName ? `Hi ${firstName}, ${cacheResult.answer}` : cacheResult.answer;
 
+      // Apply state transitions even on FAQ cache hits so the lead status
+      // advances correctly (e.g. Qualifying → Qualified, slot selection, etc.)
+      try {
+        const leadForMutations = await Lead.findById(leadId);
+        if (leadForMutations) {
+          await determineBaseResponse(leadForMutations, textMessage);
+          const mutatedLead = await Lead.findById(leadId);
+          if (mutatedLead) lead = mutatedLead;
+        }
+      } catch (mutationErr: any) {
+        console.warn('[FAQ State Mutation Warning]:', mutationErr.message);
+      }
+
       const history = lead.chatHistory || [];
       const lastMsg = history[history.length - 1];
       const itemsToPush: any[] = [];
@@ -890,6 +905,8 @@ export const processIncomingMessage = async (leadId: string, textMessage: string
       }
 
       if (io) io.to('/crm').emit(streamEvent, { token: aiResponse });
+      const ioFaq = getIO();
+      if (ioFaq) ioFaq.to('/crm').emit('lead:updated', lead);
       await sendWhatsAppText(leadId, lead.mobile, aiResponse, true);
       return;
     } else {
@@ -900,15 +917,39 @@ export const processIncomingMessage = async (leadId: string, textMessage: string
   if (hasProviderKey) {
     try {
       const { runAgentConversation } = require('./aiAgentService');
+
+      // Run the rule engine first on a fresh copy of the lead to apply all state
+      // transitions (status changes, proposedPropertyId, selectedVisitDay, visit
+      // scheduling, follow-up queuing, etc.) regardless of which text path wins.
+      // We discard the rule-engine text and send the richer LLM response instead.
+      const leadForMutations = await Lead.findById(leadId);
+      if (leadForMutations) {
+        try {
+          await determineBaseResponse(leadForMutations, textMessage);
+          // Re-fetch lead so subsequent code sees the updated state from mutations
+          const mutatedLead = await Lead.findById(leadId);
+          if (mutatedLead) lead = mutatedLead;
+        } catch (mutationErr: any) {
+          console.warn('[State Mutation Warning] determineBaseResponse mutation pass failed (non-fatal):', mutationErr.message);
+        }
+      }
+
       aiResponse = await runAgentConversation(lead, textMessage);
     } catch (err: any) {
       console.error('[AI Agent Fallback Triggered] Error in Agent Conversation:', err.message);
+      // Fallback: rule engine handles both mutations AND text
       aiResponse = await determineBaseResponse(lead, textMessage);
     }
   } else {
+    // Rule engine path: mutations and text generation happen together
     const baseResponse = await determineBaseResponse(lead, textMessage);
     aiResponse = await polishWithAI(lead, baseResponse);
   }
+
+  // Re-fetch lead one final time to ensure we persist the latest state
+  // (determineBaseResponse may have saved intermediate changes)
+  const finalLead = await Lead.findById(leadId);
+  if (finalLead) lead = finalLead;
 
   const history = lead.chatHistory || [];
   const lastMsg = history[history.length - 1];
@@ -932,6 +973,9 @@ export const processIncomingMessage = async (leadId: string, textMessage: string
   }
 
   if (io) io.to('/crm').emit(streamEvent, { token: aiResponse });
+  // Emit lead:updated so the CRM dashboard reflects the new status immediately
+  const io2 = getIO();
+  if (io2) io2.to('/crm').emit('lead:updated', lead);
   await sendWhatsAppText(leadId, lead.mobile, aiResponse, true);
 };
 
