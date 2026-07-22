@@ -236,14 +236,25 @@ export const initBaileysSession = async (tenantId: string, forceFresh: boolean =
               const rawPhone = primaryJid.split('@')[0].split(':')[0];
               const cleanPhone = formatWhatsAppNumber(rawPhone);
               const text =
+                // Plain text messages
                 msg.message.conversation ||
                 msg.message.extendedTextMessage?.text ||
+                // Ephemeral (disappearing) messages
                 msg.message.ephemeralMessage?.message?.conversation ||
                 msg.message.ephemeralMessage?.message?.extendedTextMessage?.text ||
+                // Button responses (legacy)
                 msg.message.buttonsResponseMessage?.selectedButtonId ||
                 msg.message.buttonsResponseMessage?.selectedDisplayText ||
+                // List responses
                 msg.message.listResponseMessage?.singleSelectReply?.selectedRowId ||
                 msg.message.listResponseMessage?.title ||
+                // Template reply buttons — fired when lead taps a button on a template message
+                msg.message.templateButtonReplyMessage?.selectedId ||
+                msg.message.templateButtonReplyMessage?.selectedDisplayText ||
+                // Interactive messages (newer Baileys / WhatsApp Business API)
+                msg.message.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson ||
+                msg.message.interactiveResponseMessage?.body?.text ||
+                // Media captions
                 msg.message.imageMessage?.caption ||
                 msg.message.videoMessage?.caption ||
                 '';
@@ -506,14 +517,23 @@ export const sendOpenWAText = async (tenantId: string, to: string, message: stri
   const formattedTo = formatWhatsAppNumber(to);
   const status = await getOpenWAStatus(tenantId);
 
-  // Construct target JID handling both standard phone numbers and WhatsApp LID accounts
+  // Construct target JID handling both standard phone numbers and WhatsApp LID accounts.
+  // Standard international numbers are at most 15 digits (E.164); LIDs issued by WhatsApp
+  // are typically 14+ digit numeric identifiers that must use the @lid suffix.
+  // We treat anything > 15 digits (after stripping non-digits) as a LID.
   let jid = '';
   if (to.includes('@')) {
+    // Already a fully-qualified JID — use as-is
     jid = to;
-  } else if (to.length > 12) {
-    jid = `${to}@lid`;
   } else {
-    jid = `${formattedTo}@s.whatsapp.net`;
+    const digitsOnly = to.replace(/\D/g, '');
+    if (digitsOnly.length > 15) {
+      // LID-style identifier
+      jid = `${digitsOnly}@lid`;
+    } else {
+      // Normal E.164 phone number
+      jid = `${formattedTo || digitsOnly}@s.whatsapp.net`;
+    }
   }
 
   console.log(`[OpenWA Dispatch] Tenant ${tenantId} -> Target JID: ${jid} (raw: ${to}), Msg: "${message}" (Status: ${status.status})`);
@@ -552,7 +572,8 @@ export const sendOpenWADocument = async (
   caption?: string
 ): Promise<any> => {
   const formattedTo = formatWhatsAppNumber(to);
-  let jid = to.includes('@') ? to : (to.length > 12 ? `${to}@lid` : `${formattedTo}@s.whatsapp.net`);
+  const docDigitsOnly = to.replace(/\D/g, '');
+  let jid = to.includes('@') ? to : (docDigitsOnly.length > 15 ? `${docDigitsOnly}@lid` : `${formattedTo || docDigitsOnly}@s.whatsapp.net`);
   console.log(`[OpenWA Document Dispatch] Tenant ${tenantId} -> Target JID: ${jid}, Document: ${filename} (${documentUrl})`);
 
   let sock = socketsMap.get(tenantId);
@@ -585,7 +606,8 @@ export const sendOpenWADocument = async (
 
 export const sendOpenWAImage = async (tenantId: string, to: string, imageUrl: string, caption?: string): Promise<any> => {
   const formattedTo = formatWhatsAppNumber(to);
-  let jid = to.includes('@') ? to : (to.length > 12 ? `${to}@lid` : `${formattedTo}@s.whatsapp.net`);
+  const imgDigitsOnly = to.replace(/\D/g, '');
+  let jid = to.includes('@') ? to : (imgDigitsOnly.length > 15 ? `${imgDigitsOnly}@lid` : `${formattedTo || imgDigitsOnly}@s.whatsapp.net`);
   console.log(`[OpenWA Image Dispatch] Tenant ${tenantId} -> Target JID: ${jid}, Image: ${imageUrl}`);
 
   let sock = socketsMap.get(tenantId);
