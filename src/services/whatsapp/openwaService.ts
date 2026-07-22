@@ -513,9 +513,38 @@ export const logoutOpenWA = async (tenantId: string): Promise<any> => {
 import { getQueue } from '../queue/queueConfig';
 import { processIncomingMessage } from '../ai/aiService';
 
+/**
+ * Returns true when the Baileys socket is alive and the underlying WebSocket is open.
+ * Baileys exposes sock.ws as a WebSocketClient wrapper whose `.isOpen` getter checks
+ * the inner socket's readyState. Using sock.ws.readyState directly always returns
+ * undefined because readyState lives on the inner socket, not the wrapper.
+ */
+function isSockOpen(sock: any): boolean {
+  if (!sock) return false;
+  // Primary check via Baileys' own WebSocketClient.isOpen getter
+  if (sock.ws && typeof sock.ws.isOpen === 'boolean') return sock.ws.isOpen;
+  // Secondary check: if the socket has a user object it completed auth
+  if (sock.user) return true;
+  return false;
+}
+
+/**
+ * Waits until the socket inside socketsMap for a tenant is open and authenticated,
+ * or until the timeout expires. Used after initBaileysSession to avoid sending
+ * before the WS handshake completes.
+ */
+async function waitForSockReady(tenantId: string, timeoutMs = 15000): Promise<any> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const s = socketsMap.get(tenantId);
+    if (s && isSockOpen(s)) return s;
+    await new Promise(r => setTimeout(r, 300));
+  }
+  return socketsMap.get(tenantId) || null;
+}
+
 export const sendOpenWAText = async (tenantId: string, to: string, message: string): Promise<any> => {
   const formattedTo = formatWhatsAppNumber(to);
-  const status = await getOpenWAStatus(tenantId);
 
   // Construct target JID handling both standard phone numbers and WhatsApp LID accounts.
   // Standard international numbers are at most 15 digits (E.164); LIDs issued by WhatsApp
@@ -536,13 +565,14 @@ export const sendOpenWAText = async (tenantId: string, to: string, message: stri
     }
   }
 
-  console.log(`[OpenWA Dispatch] Tenant ${tenantId} -> Target JID: ${jid} (raw: ${to}), Msg: "${message}" (Status: ${status.status})`);
-
   let sock = socketsMap.get(tenantId);
-  if (!sock || !sock.ws || sock.ws.readyState !== 1) {
-    console.log(`[OpenWA Dispatch] Socket not active for tenant ${tenantId}. Attempting re-initialization...`);
+
+  if (!isSockOpen(sock)) {
+    console.log(`[OpenWA Dispatch] Socket not open for tenant ${tenantId}. Attempting re-initialization...`);
     try {
-      sock = await initBaileysSession(tenantId, false);
+      await initBaileysSession(tenantId, false);
+      // Wait for the socket to finish its WS handshake before sending
+      sock = await waitForSockReady(tenantId, 15000);
     } catch (e: any) {
       console.error(`[OpenWA Dispatch Error] Failed to restore socket for tenant ${tenantId}:`, e.message);
     }
@@ -552,6 +582,7 @@ export const sendOpenWAText = async (tenantId: string, to: string, message: stri
     throw new Error(`[OpenWA Dispatch Error] Socket unavailable for tenant ${tenantId}. Message could not be sent to ${to}.`);
   }
 
+  console.log(`[OpenWA Dispatch] Tenant ${tenantId} -> Target JID: ${jid} (raw: ${to}), Msg: "${message}"`);
   const result = await sock.sendMessage(jid, { text: message });
   console.log(`[OpenWA Send Success] Delivered text to ${jid}`);
 
@@ -560,7 +591,6 @@ export const sendOpenWAText = async (tenantId: string, to: string, message: stri
     provider: 'openwa',
     to: formattedTo || to,
     messageId: result?.key?.id,
-    status: status.status,
   };
 };
 
@@ -577,9 +607,10 @@ export const sendOpenWADocument = async (
   console.log(`[OpenWA Document Dispatch] Tenant ${tenantId} -> Target JID: ${jid}, Document: ${filename} (${documentUrl})`);
 
   let sock = socketsMap.get(tenantId);
-  if (!sock || !sock.ws || sock.ws.readyState !== 1) {
+  if (!isSockOpen(sock)) {
     try {
-      sock = await initBaileysSession(tenantId, false);
+      await initBaileysSession(tenantId, false);
+      sock = await waitForSockReady(tenantId, 15000);
     } catch (e: any) {}
   }
 
@@ -611,9 +642,10 @@ export const sendOpenWAImage = async (tenantId: string, to: string, imageUrl: st
   console.log(`[OpenWA Image Dispatch] Tenant ${tenantId} -> Target JID: ${jid}, Image: ${imageUrl}`);
 
   let sock = socketsMap.get(tenantId);
-  if (!sock || !sock.ws || sock.ws.readyState !== 1) {
+  if (!isSockOpen(sock)) {
     try {
-      sock = await initBaileysSession(tenantId, false);
+      await initBaileysSession(tenantId, false);
+      sock = await waitForSockReady(tenantId, 15000);
     } catch (e: any) {}
   }
 

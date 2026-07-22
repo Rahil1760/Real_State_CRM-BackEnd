@@ -64,6 +64,20 @@ export const resolvePropertyBrochure = async (property: any): Promise<{ url: str
 
 import { getWhatsAppProvider } from './whatsappFactory';
 
+/**
+ * Resolves the best recipient address for a lead.
+ * For OpenWA (Baileys), the full JID stored in aiContext.whatsappLid
+ * (e.g. "919876543210@s.whatsapp.net") must be used so Baileys routes
+ * the message to the correct WhatsApp account. Falls back to the raw
+ * phone number when the JID has not yet been recorded.
+ */
+const resolveRecipient = (lead: any, fallback: string): string => {
+  const lid = lead?.aiContext?.whatsappLid;
+  // Only use lid if it looks like a proper JID or a non-empty string different from the fallback
+  if (lid && lid.trim() !== '') return lid;
+  return fallback;
+};
+
 export const sendWhatsAppText = async (leadId: string, to: string, text: string, skipHistoryLog: boolean = false, tenantIdOverride?: string): Promise<boolean> => {
   let tenantId: any = null;
   try {
@@ -85,7 +99,7 @@ export const sendWhatsAppText = async (leadId: string, to: string, text: string,
     }
 
     const provider = await getWhatsAppProvider(tenantId?.toString() || tenantId);
-    const targetRecipient = (lead?.aiContext as any)?.whatsappLid || to;
+    const targetRecipient = resolveRecipient(lead, to);
     await provider.sendText(targetRecipient, text);
 
     // ON SUCCESS (real API post succeeded, or mock mode)
@@ -261,7 +275,8 @@ export const sendWhatsAppTemplate = async (
     }
 
     const provider = await getWhatsAppProvider(tenantId?.toString() || tenantId);
-    await provider.sendTemplate(to, templateName, parameters, effectiveLang);
+    const templateRecipient = resolveRecipient(lead, to);
+    await provider.sendTemplate(templateRecipient, templateName, parameters, effectiveLang);
 
     // ON SUCCESS (real API post succeeded, or mock mode)
     const notification = new Notification({
@@ -438,7 +453,7 @@ export const sendWhatsAppDocument = async (
     }
 
     const provider = await getWhatsAppProvider(tenantId?.toString() || tenantId);
-    await provider.sendDocument(to, documentUrl, filename, caption);
+    await provider.sendDocument(resolveRecipient(lead, to), documentUrl, filename, caption);
     return true;
   } catch (error: any) {
     console.error('Error sending WhatsApp document:', error.response?.data || error.message);
