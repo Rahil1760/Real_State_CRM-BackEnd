@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import Lead from '../models/Lead';
 import Tenant from '../models/Tenant';
+import OpenWASession from '../models/OpenWASession';
 import { getIO } from '../services/socket/socketService';
 import { getQueue } from '../services/queue/queueConfig';
 import { sendWhatsAppText, sendWhatsAppTemplate, formatWhatsAppNumber } from '../services/whatsapp/whatsappService';
@@ -191,18 +192,76 @@ export const receiveWhatsApp = async (req: Request, res: Response) => {
     if (!entry || entry.length === 0) {
       // Check if this is an OpenWA or custom WhatsApp webhook payload
       const body = req.body || {};
-      const leadPhone = body.leadPhone || body.from || body.phone || body.mobile || body.sender || body.data?.from || body.data?.phone || body.data?.mobile;
+      const extractStringOrId = (val: any): string => {
+        if (!val) return '';
+        if (typeof val === 'string') return val;
+        if (typeof val === 'number') return String(val);
+        if (typeof val === 'object') {
+          return val.id || val.phone || val.mobile || val.jid || val.number || '';
+        }
+        return '';
+      };
+
+      const rawPhoneCandidate =
+        extractStringOrId(body.leadPhone) ||
+        extractStringOrId(body.from) ||
+        extractStringOrId(body.phone) ||
+        extractStringOrId(body.mobile) ||
+        extractStringOrId(body.sender) ||
+        extractStringOrId(body.data?.from) ||
+        extractStringOrId(body.data?.phone) ||
+        extractStringOrId(body.data?.mobile) ||
+        extractStringOrId(body.data?.sender);
+
       const textMessage = body.message || body.body || body.text || body.data?.message || body.data?.body || body.data?.text;
 
-      if (leadPhone && textMessage) {
+      // Ignore group messages, broadcasts, or status updates
+      const isGroup =
+        body.isGroupMsg ||
+        body.data?.isGroupMsg ||
+        body.isGroup ||
+        body.data?.isGroup ||
+        rawPhoneCandidate.endsWith('@g.us') ||
+        rawPhoneCandidate.includes('broadcast') ||
+        rawPhoneCandidate.includes('status');
+
+      if (isGroup) {
+        console.log('[OpenWA Webhook] Ignored group message or broadcast');
+        return res.status(200).send('EVENT_RECEIVED');
+      }
+
+      if (rawPhoneCandidate && textMessage) {
+        const cleanPhone = formatWhatsAppNumber(rawPhoneCandidate);
+        const last10 = cleanPhone.slice(-10);
+        const mobileOrQuery = [
+          { mobile: cleanPhone },
+          { mobile: last10 },
+          { mobile: `+${cleanPhone}` },
+          { mobile: `0${last10}` },
+          { mobile: `91${last10}` }
+        ];
+
         let tenantId = body.tenantId || req.query.tenantId || req.headers['x-tenant-id'];
-        if (!tenantId) {
-          const cleanPhone = formatWhatsAppNumber(String(leadPhone));
-          const existingLead = await Lead.findOne({ mobile: cleanPhone }).sort({ updatedAt: -1 });
+
+        // 1. Check if lead exists across ALL tenants using multi-format phone query
+        if (!tenantId && cleanPhone) {
+          const existingLead = await Lead.findOne({ $or: mobileOrQuery }).sort({ updatedAt: -1 });
           if (existingLead) {
             tenantId = existingLead.tenantId.toString();
+            console.log(`[OpenWA Webhook] Matched existing lead (${existingLead._id}) in tenant (${tenantId}) for phone: ${cleanPhone}`);
           }
         }
+
+        // 2. Check for active connected OpenWASession
+        if (!tenantId) {
+          const activeSession = await OpenWASession.findOne({ status: 'connected' });
+          if (activeSession) {
+            tenantId = activeSession.tenantId.toString();
+            console.log(`[OpenWA Webhook] Resolved tenantId (${tenantId}) from connected OpenWASession`);
+          }
+        }
+
+        // 3. Fallback to default tenant
         if (!tenantId) {
           const defaultTenant = await Tenant.findOne({});
           if (defaultTenant) {
@@ -211,10 +270,19 @@ export const receiveWhatsApp = async (req: Request, res: Response) => {
         }
 
         if (tenantId) {
-          const leadName = body.leadName || body.name || body.pushName || body.senderName || body.data?.pushName || 'WhatsApp User';
+          const leadName =
+            body.leadName ||
+            body.name ||
+            body.pushName ||
+            body.senderName ||
+            body.sender?.pushname ||
+            body.sender?.name ||
+            body.data?.pushName ||
+            'WhatsApp User';
+
           await processNormalizedInboundMessage({
             tenantId: tenantId.toString(),
-            leadPhone: String(leadPhone),
+            leadPhone: rawPhoneCandidate,
             leadName,
             message: String(textMessage),
             timestamp: body.timestamp ? new Date(body.timestamp) : new Date(),
@@ -351,6 +419,14 @@ export const receiveWhatsApp = async (req: Request, res: Response) => {
 
     // Search for lead using multi-format query
     let lead = await Lead.findOne({ tenantId, $or: mobileOrQuery }).sort({ updatedAt: -1 });
+
+    if (!lead) {
+      // Fallback cross-tenant search to prevent duplicate lead creation
+      lead = await Lead.findOne({ $or: mobileOrQuery }).sort({ updatedAt: -1 });
+      if (lead) {
+        console.log(`[Meta WhatsApp Webhook] Matched existing lead (${lead._id}) in tenant (${lead.tenantId}) for mobile ${cleanFrom}`);
+      }
+    }
 
     if (!lead) {
       // Check if lead limit is reached before creating!

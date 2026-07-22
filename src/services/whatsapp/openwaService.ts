@@ -605,19 +605,35 @@ export const processNormalizedInboundMessage = async (payload: {
 }): Promise<any> => {
   const { tenantId, leadName, message, timestamp, source } = payload;
   const cleanPhone = formatWhatsAppNumber(payload.leadPhone);
+  if (!cleanPhone) {
+    console.warn(`[Normalized Inbound WhatsApp] Empty clean phone number from raw: "${payload.leadPhone}". Skipping processing.`);
+    return { success: false, reason: 'Invalid phone number' };
+  }
+
   const last10 = cleanPhone.slice(-10);
+  const mobileOrQuery = [
+    { mobile: cleanPhone },
+    { mobile: last10 },
+    { mobile: `+${cleanPhone}` },
+    { mobile: `0${last10}` },
+    { mobile: `91${last10}` }
+  ];
+
   console.log(`[Normalized Inbound WhatsApp] Tenant: ${tenantId}, Lead: ${cleanPhone} (raw: ${payload.leadPhone}), Source: ${source}, Text: "${message}"`);
 
+  // First search for lead within the specified tenant
   let lead = await Lead.findOne({
     tenantId,
-    $or: [
-      { mobile: cleanPhone },
-      { mobile: last10 },
-      { mobile: `+${cleanPhone}` },
-      { mobile: `0${last10}` },
-      { mobile: `91${last10}` }
-    ]
+    $or: mobileOrQuery
   }).sort({ updatedAt: -1 });
+
+  // If not found in requested tenant, search across ALL tenants to prevent duplicate lead creation
+  if (!lead) {
+    lead = await Lead.findOne({ $or: mobileOrQuery }).sort({ updatedAt: -1 });
+    if (lead) {
+      console.log(`[Normalized Inbound WhatsApp] Matched existing lead (${lead._id}) in tenant (${lead.tenantId}) for phone ${cleanPhone}`);
+    }
+  }
 
   if (!lead) {
     lead = new Lead({
