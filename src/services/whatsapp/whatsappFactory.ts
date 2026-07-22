@@ -17,10 +17,10 @@ export class WhatsAppFactory {
     const resolvedTenantId = tenant ? tenant._id.toString() : (tenantId ? tenantId.toString() : '');
     let providerType = tenant?.whatsappProvider;
 
-    if (!providerType && resolvedTenantId) {
+    if (resolvedTenantId) {
       const openwaSession = await OpenWASession.findOne({ tenantId: resolvedTenantId, status: 'connected' });
-      if (openwaSession) {
-        providerType = 'openwa';
+      if (openwaSession || providerType === 'openwa') {
+        return new OpenWAProvider(resolvedTenantId);
       }
     }
 

@@ -221,13 +221,19 @@ export const initBaileysSession = async (tenantId: string, forceFresh: boolean =
           for (const msg of m.messages) {
             if (!msg.key.fromMe && msg.message) {
               const fromJid = msg.key.remoteJid || '';
+              const participantJid = msg.key.participant || (msg.key as any).remoteJidAlt || '';
 
               // Ignore group messages and broadcast status updates
               if (fromJid.endsWith('@g.us') || fromJid.includes('broadcast') || fromJid.includes('status')) {
                 continue;
               }
 
-              const rawPhone = fromJid.split('@')[0].split(':')[0];
+              // Determine primary phone/LID JID
+              const primaryJid = fromJid.endsWith('@s.whatsapp.net')
+                ? fromJid
+                : (participantJid.endsWith('@s.whatsapp.net') ? participantJid : fromJid);
+
+              const rawPhone = primaryJid.split('@')[0].split(':')[0];
               const cleanPhone = formatWhatsAppNumber(rawPhone);
               const text =
                 msg.message.conversation ||
@@ -243,11 +249,12 @@ export const initBaileysSession = async (tenantId: string, forceFresh: boolean =
                 '';
               const pushName = msg.pushName || 'WhatsApp User';
 
-              if (text && cleanPhone) {
-                console.log(`[Baileys Inbound Message] Tenant ${tenantId} -> Lead: ${cleanPhone} ("${text}")`);
+              if (text && (cleanPhone || primaryJid)) {
+                console.log(`[Baileys Inbound Message] Tenant ${tenantId} -> JID: ${primaryJid}, Phone: ${cleanPhone}, PushName: "${pushName}", Text: "${text}"`);
                 await processNormalizedInboundMessage({
                   tenantId,
-                  leadPhone: cleanPhone,
+                  leadPhone: cleanPhone || rawPhone,
+                  rawJid: primaryJid,
                   leadName: pushName,
                   message: text,
                   timestamp: new Date(Number(msg.messageTimestamp) * 1000 || Date.now()),
@@ -499,11 +506,21 @@ export const sendOpenWAText = async (tenantId: string, to: string, message: stri
   const formattedTo = formatWhatsAppNumber(to);
   const status = await getOpenWAStatus(tenantId);
 
-  console.log(`[OpenWA Dispatch] Tenant ${tenantId} -> To: ${formattedTo}, Msg: "${message}" (Status: ${status.status})`);
+  // Construct target JID handling both standard phone numbers and WhatsApp LID accounts
+  let jid = '';
+  if (to.includes('@')) {
+    jid = to;
+  } else if (to.length > 12) {
+    jid = `${to}@lid`;
+  } else {
+    jid = `${formattedTo}@s.whatsapp.net`;
+  }
+
+  console.log(`[OpenWA Dispatch] Tenant ${tenantId} -> Target JID: ${jid} (raw: ${to}), Msg: "${message}" (Status: ${status.status})`);
 
   let sock = socketsMap.get(tenantId);
-  if (!sock) {
-    console.log(`[OpenWA Dispatch] Socket not in memory for tenant ${tenantId}. Attempting re-initialization...`);
+  if (!sock || !sock.ws || sock.ws.readyState !== 1) {
+    console.log(`[OpenWA Dispatch] Socket not active for tenant ${tenantId}. Attempting re-initialization...`);
     try {
       sock = await initBaileysSession(tenantId, false);
     } catch (e: any) {
@@ -511,18 +528,18 @@ export const sendOpenWAText = async (tenantId: string, to: string, message: stri
     }
   }
 
-  if (sock) {
-    const jid = `${formattedTo}@s.whatsapp.net`;
-    await sock.sendMessage(jid, { text: message }).catch((err: any) => console.error('[Baileys sendText error]:', err.message));
-  } else {
-    console.error(`[OpenWA Dispatch Error] Socket unavailable for tenant ${tenantId}. Message could not be sent to ${formattedTo}.`);
+  if (!sock) {
+    throw new Error(`[OpenWA Dispatch Error] Socket unavailable for tenant ${tenantId}. Message could not be sent to ${to}.`);
   }
+
+  const result = await sock.sendMessage(jid, { text: message });
+  console.log(`[OpenWA Send Success] Delivered text to ${jid}`);
 
   return {
     success: true,
     provider: 'openwa',
-    to: formattedTo,
-    message,
+    to: formattedTo || to,
+    messageId: result?.key?.id,
     status: status.status,
   };
 };
@@ -535,30 +552,31 @@ export const sendOpenWADocument = async (
   caption?: string
 ): Promise<any> => {
   const formattedTo = formatWhatsAppNumber(to);
-  console.log(`[OpenWA Document Dispatch] Tenant ${tenantId} -> To: ${formattedTo}, Document: ${filename} (${documentUrl})`);
+  let jid = to.includes('@') ? to : (to.length > 12 ? `${to}@lid` : `${formattedTo}@s.whatsapp.net`);
+  console.log(`[OpenWA Document Dispatch] Tenant ${tenantId} -> Target JID: ${jid}, Document: ${filename} (${documentUrl})`);
 
   let sock = socketsMap.get(tenantId);
-  if (!sock) {
+  if (!sock || !sock.ws || sock.ws.readyState !== 1) {
     try {
       sock = await initBaileysSession(tenantId, false);
     } catch (e: any) {}
   }
 
-  if (sock) {
-    const jid = `${formattedTo}@s.whatsapp.net`;
-    await sock
-      .sendMessage(jid, {
-        document: { url: documentUrl },
-        fileName: filename,
-        caption: caption || '',
-      })
-      .catch((err: any) => console.error('[Baileys sendDocument error]:', err.message));
+  if (!sock) {
+    throw new Error(`[OpenWA Document Error] Socket unavailable for tenant ${tenantId}`);
   }
+
+  const result = await sock.sendMessage(jid, {
+    document: { url: documentUrl },
+    fileName: filename,
+    caption: caption || '',
+  });
 
   return {
     success: true,
     provider: 'openwa',
-    to: formattedTo,
+    to: formattedTo || to,
+    messageId: result?.key?.id,
     filename,
     documentUrl,
     caption,
@@ -567,29 +585,30 @@ export const sendOpenWADocument = async (
 
 export const sendOpenWAImage = async (tenantId: string, to: string, imageUrl: string, caption?: string): Promise<any> => {
   const formattedTo = formatWhatsAppNumber(to);
-  console.log(`[OpenWA Image Dispatch] Tenant ${tenantId} -> To: ${formattedTo}, Image: ${imageUrl}`);
+  let jid = to.includes('@') ? to : (to.length > 12 ? `${to}@lid` : `${formattedTo}@s.whatsapp.net`);
+  console.log(`[OpenWA Image Dispatch] Tenant ${tenantId} -> Target JID: ${jid}, Image: ${imageUrl}`);
 
   let sock = socketsMap.get(tenantId);
-  if (!sock) {
+  if (!sock || !sock.ws || sock.ws.readyState !== 1) {
     try {
       sock = await initBaileysSession(tenantId, false);
     } catch (e: any) {}
   }
 
-  if (sock) {
-    const jid = `${formattedTo}@s.whatsapp.net`;
-    await sock
-      .sendMessage(jid, {
-        image: { url: imageUrl },
-        caption: caption || '',
-      })
-      .catch((err: any) => console.error('[Baileys sendImage error]:', err.message));
+  if (!sock) {
+    throw new Error(`[OpenWA Image Error] Socket unavailable for tenant ${tenantId}`);
   }
+
+  const result = await sock.sendMessage(jid, {
+    image: { url: imageUrl },
+    caption: caption || '',
+  });
 
   return {
     success: true,
     provider: 'openwa',
-    to: formattedTo,
+    to: formattedTo || to,
+    messageId: result?.key?.id,
     imageUrl,
     caption,
   };
@@ -598,55 +617,92 @@ export const sendOpenWAImage = async (tenantId: string, to: string, imageUrl: st
 export const processNormalizedInboundMessage = async (payload: {
   tenantId: string;
   leadPhone: string;
+  rawJid?: string;
   leadName?: string;
   message: string;
   timestamp: Date;
   source: 'meta' | 'openwa';
 }): Promise<any> => {
-  const { tenantId, leadName, message, timestamp, source } = payload;
-  const cleanPhone = formatWhatsAppNumber(payload.leadPhone);
-  if (!cleanPhone) {
-    console.warn(`[Normalized Inbound WhatsApp] Empty clean phone number from raw: "${payload.leadPhone}". Skipping processing.`);
+  const { leadName, message, timestamp, source, rawJid } = payload;
+  let tenantId = payload.tenantId;
+
+  const cleanPhone = formatWhatsAppNumber(payload.leadPhone) || payload.leadPhone.replace(/\D/g, '');
+  if (!cleanPhone && !rawJid) {
+    console.warn(`[Normalized Inbound WhatsApp] Empty phone & rawJid: "${payload.leadPhone}". Skipping.`);
     return { success: false, reason: 'Invalid phone number' };
   }
 
-  const last10 = cleanPhone.slice(-10);
-  const mobileOrQuery = [
+  const last10 = cleanPhone ? cleanPhone.slice(-10) : '';
+  const phoneRegex = last10 ? new RegExp(`${last10}$`) : null;
+
+  const mobileOrQuery: any[] = [
     { mobile: cleanPhone },
     { mobile: last10 },
     { mobile: `+${cleanPhone}` },
     { mobile: `0${last10}` },
-    { mobile: `91${last10}` }
+    { mobile: `91${last10}` },
   ];
+  if (phoneRegex) {
+    mobileOrQuery.push({ mobile: { $regex: phoneRegex } });
+  }
 
-  console.log(`[Normalized Inbound WhatsApp] Tenant: ${tenantId}, Lead: ${cleanPhone} (raw: ${payload.leadPhone}), Source: ${source}, Text: "${message}"`);
+  if (rawJid) {
+    mobileOrQuery.push({ 'aiContext.whatsappLid': rawJid });
+  }
+  if (cleanPhone) {
+    mobileOrQuery.push({ 'aiContext.whatsappLid': cleanPhone });
+  }
 
-  // First search for lead within the specified tenant
+  console.log(`[Normalized Inbound WhatsApp] Tenant: ${tenantId}, Lead: ${cleanPhone} (rawJid: ${rawJid}), PushName: "${leadName}", Source: ${source}, Text: "${message}"`);
+
+  // 1. Search for lead by phone / LID within requested tenant
   let lead = await Lead.findOne({
     tenantId,
-    $or: mobileOrQuery
+    $or: mobileOrQuery,
   }).sort({ updatedAt: -1 });
 
-  // If not found in requested tenant, search across ALL tenants to prevent duplicate lead creation
+  // 2. If not found by phone/LID, search by pushName/name within requested tenant
+  if (!lead && leadName && leadName !== 'WhatsApp User' && leadName !== 'Anonymous') {
+    lead = await Lead.findOne({
+      tenantId,
+      name: { $regex: new RegExp(`^${leadName.trim()}$`, 'i') },
+    }).sort({ updatedAt: -1 });
+    if (lead) {
+      console.log(`[Normalized Inbound WhatsApp] Matched lead (${lead._id}) by name "${leadName}" in tenant (${tenantId})`);
+    }
+  }
+
+  // 3. Search across ALL tenants if not found in requested tenant
   if (!lead) {
     lead = await Lead.findOne({ $or: mobileOrQuery }).sort({ updatedAt: -1 });
     if (lead) {
-      console.log(`[Normalized Inbound WhatsApp] Matched existing lead (${lead._id}) in tenant (${lead.tenantId}) for phone ${cleanPhone}`);
+      console.log(`[Normalized Inbound WhatsApp] Matched lead (${lead._id}) in tenant (${lead.tenantId}) for phone ${cleanPhone}`);
+      tenantId = lead.tenantId.toString();
     }
   }
 
   if (!lead) {
+    // Create new lead with cleanPhone or rawJid
     lead = new Lead({
       tenantId,
-      name: leadName || `WhatsApp Lead (${cleanPhone})`,
-      mobile: cleanPhone,
+      name: leadName || `WhatsApp Lead (${cleanPhone || rawJid})`,
+      mobile: cleanPhone || rawJid || payload.leadPhone,
       source: `WhatsApp (${source.toUpperCase()})`,
       status: 'New',
       chatHistory: [],
+      aiContext: {
+        whatsappLid: rawJid || cleanPhone,
+      },
     });
   } else {
-    // Normalize mobile to cleanPhone so future lookups are instant
-    lead.mobile = cleanPhone;
+    // Update existing lead with LID JID and pushName if relevant
+    if (!lead.aiContext) lead.aiContext = {};
+    if (rawJid) {
+      lead.aiContext.whatsappLid = rawJid;
+    }
+    if (cleanPhone && cleanPhone.length >= 10 && cleanPhone.length <= 12 && lead.mobile.length > 12) {
+      lead.mobile = cleanPhone; // Replace 14-digit LID stored as mobile with clean phone if available
+    }
     if (leadName && (!lead.name || lead.name === 'Anonymous' || lead.name.startsWith('WhatsApp Lead'))) {
       lead.name = leadName;
     }
@@ -688,7 +744,7 @@ export const processNormalizedInboundMessage = async (payload: {
     console.warn(`[Inbound Processing] Queue error for tenant ${tenantId} (Redis issue?):`, err.message);
   }
 
-  // Fallback direct execution if BullMQ queue fails or is unavailable
+  // Direct execution fallback if queue fails or is offline
   if (!queueSuccess) {
     const capturedLeadId = lead._id.toString();
     const capturedMessage = message;

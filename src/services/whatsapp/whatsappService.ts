@@ -85,7 +85,8 @@ export const sendWhatsAppText = async (leadId: string, to: string, text: string,
     }
 
     const provider = await getWhatsAppProvider(tenantId?.toString() || tenantId);
-    await provider.sendText(to, text);
+    const targetRecipient = (lead?.aiContext as any)?.whatsappLid || to;
+    await provider.sendText(targetRecipient, text);
 
     // ON SUCCESS (real API post succeeded, or mock mode)
     const notification = new Notification({
@@ -904,7 +905,7 @@ export const processAIConversation = async (leadId: string, textMessage: string)
   if (!lead) return;
 
   // Track chat turn
-  lead.aiContext.attempts += 1;
+  lead.aiContext.attempts = (lead.aiContext.attempts || 0) + 1;
   await lead.save();
 
   // Socket stream emulation

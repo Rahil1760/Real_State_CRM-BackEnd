@@ -37,7 +37,8 @@ export interface ILead extends Document {
   assignedTo: mongoose.Types.ObjectId | null;
   timeline: ITimelineEvent[];
   aiContext: {
-    attempts: number;
+    attempts?: number;
+    whatsappLid?: string;
     lastPromptedAt?: Date;
     chatHistory?: string;
     proposedPropertyId?: string;
@@ -107,6 +108,7 @@ const LeadSchema: Schema = new Schema(
     ],
     aiContext: {
       attempts: { type: Number, default: 0 },
+      whatsappLid: { type: String, default: '' },
       lastPromptedAt: { type: Date },
       chatHistory: { type: String, default: '' },
       proposedPropertyId: { type: String },
