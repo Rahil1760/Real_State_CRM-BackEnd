@@ -14,6 +14,7 @@ import { initWorkers } from './services/queue/workers';
 
 // Import Middleware
 import { tenantMiddleware } from './middleware/tenant';
+import { globalRateLimiter, authRateLimiter } from './middleware/rateLimiter';
 
 // Import Routes
 import authRouter from './routes/auth';
@@ -30,15 +31,14 @@ import campaignsRouter from './routes/campaigns';
 import usersRouter from './routes/users';
 
 const app = express();
+app.set('trust proxy', 1);
+
 const server = http.createServer(app);
 const PORT = process.env.PORT || 5000;
 
 const allowedOrigins = [
   'https://real-state-crm-front-end.vercel.app',
-  'https://real-state-crm-front-end.vercel.app/',
   'http://localhost:5173',
-  'http://localhost:3000',
-  'http://localhost:80'
 ];
 
 app.use(cors({
@@ -68,6 +68,10 @@ app.get('/', (req: Request, res: Response) => {
 });
 
 import openwaRouter from './routes/openwaRoutes';
+
+// Apply Rate Limiters to protect API routes
+app.use('/api', globalRateLimiter);
+app.use('/api/auth', authRateLimiter);
 
 // 1. Public & Global Platform routes
 app.use('/api/auth', authRouter);
