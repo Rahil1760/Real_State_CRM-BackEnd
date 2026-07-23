@@ -10,6 +10,17 @@ const getSecretKey = (): Buffer => {
 };
 
 export const encrypt = (text: string): string => {
+  if (!text) return text;
+  // If string is already in IV:ciphertext format (32 hex IV chars + ':' + hex ciphertext), avoid double-encryption
+  const parts = text.split(':');
+  if (
+    parts.length === 2 &&
+    parts[0].length === 32 &&
+    /^[0-9a-fA-F]+$/.test(parts[0]) &&
+    /^[0-9a-fA-F]+$/.test(parts[1])
+  ) {
+    return text;
+  }
   const iv = crypto.randomBytes(IV_LENGTH);
   const cipher = crypto.createCipheriv(ALGORITHM, getSecretKey(), iv);
   let encrypted = cipher.update(text, 'utf8', 'hex');
@@ -19,10 +30,11 @@ export const encrypt = (text: string): string => {
 };
 
 export const decrypt = (text: string): string => {
+  if (!text) return text;
   try {
     const parts = text.split(':');
     if (parts.length !== 2) {
-      throw new Error('Invalid encrypted format');
+      return text;
     }
     const iv = Buffer.from(parts[0], 'hex');
     const encryptedText = Buffer.from(parts[1], 'hex');
@@ -35,3 +47,4 @@ export const decrypt = (text: string): string => {
     return text; // Fallback to raw if not encrypted
   }
 };
+

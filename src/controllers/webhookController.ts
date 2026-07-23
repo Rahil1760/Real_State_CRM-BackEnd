@@ -386,7 +386,10 @@ export const receiveWhatsApp = async (req: Request, res: Response) => {
     // Try resolving by phone number ID from Meta metadata
     const phone_number_id = value.metadata?.phone_number_id;
     if (!tenantId && phone_number_id) {
-      const matchingTenant = await Tenant.findOne({ whatsappPhoneId: phone_number_id });
+      const tenants = await Tenant.find({});
+      const matchingTenant = tenants.find(
+        (t) => t.whatsappPhoneId === phone_number_id || t.metaConfig?.phoneNumberId === phone_number_id
+      );
       if (matchingTenant) {
         tenantId = matchingTenant._id.toString();
         console.log(`[WhatsApp Webhook] Resolved tenantId (${tenantId}) from phone_number_id: ${phone_number_id}`);

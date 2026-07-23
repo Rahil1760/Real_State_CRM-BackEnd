@@ -89,8 +89,18 @@ const TenantSchema: Schema = new Schema(
       default: 'meta',
     },
     metaConfig: {
-      phoneNumberId: { type: String, default: '' },
-      accessToken: { type: String, default: '' },
+      phoneNumberId: { 
+        type: String, 
+        default: '',
+        get: (val: string) => val ? decrypt(val) : val,
+        set: (val: string) => val ? encrypt(val) : val
+      },
+      accessToken: { 
+        type: String, 
+        default: '',
+        get: (val: string) => val ? decrypt(val) : val,
+        set: (val: string) => val ? encrypt(val) : val
+      },
       businessAccountId: { type: String, default: '' },
     },
     openwaConfig: {
