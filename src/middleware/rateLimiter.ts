@@ -10,6 +10,7 @@ export const globalRateLimiter = rateLimit({
   max: parseInt(process.env.RATE_LIMIT_MAX || '100', 10), // Limit each IP to 100 requests per windowMs
   standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
   legacyHeaders: false, // Disable legacy `X-RateLimit-*` headers
+  validate: { keyGeneratorIpFallback: false },
   message: {
     status: 429,
     message: 'Too many requests, please try again later.',
@@ -45,6 +46,7 @@ export const aiRateLimiter = rateLimit({
   max: parseInt(process.env.AI_RATE_LIMIT_MAX || '30', 10),
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { keyGeneratorIpFallback: false },
   message: {
     status: 429,
     message: 'Too many AI requests. Please wait a moment before trying again.',

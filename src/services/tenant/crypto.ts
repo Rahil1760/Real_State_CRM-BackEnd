@@ -4,7 +4,7 @@ const ALGORITHM = 'aes-256-cbc';
 const IV_LENGTH = 16;
 
 const getSecretKey = (): Buffer => {
-  const secret = process.env.ENCRYPTION_KEY || 'super_secret_aes_key_32_chars_xyz123';
+  const secret = process.env.ENCRYPTION_KEY || "";
   // Enforce exactly 32 bytes by hashing the secret
   return crypto.createHash('sha256').update(secret).digest();
 };

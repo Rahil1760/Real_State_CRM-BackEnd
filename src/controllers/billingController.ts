@@ -31,7 +31,7 @@ export const upgradePlan = async (req: TenantRequest, res: Response) => {
     const tenantId = req.tenant?._id;
     if (!tenantId) return res.status(400).json({ message: 'Tenant context missing' });
 
-    const { plan, billingCycle } = req.body;
+    const { plan, billingCycle, paymentId, paymentMethod } = req.body;
     if (!plan || !['starter', 'pro', 'growth', 'enterprise'].includes(plan)) {
       return res.status(400).json({ message: 'Invalid plan selected' });
     }
@@ -63,7 +63,7 @@ export const upgradePlan = async (req: TenantRequest, res: Response) => {
     const invoice = new Invoice({
       tenantId: tenant._id,
       amount,
-      razorpayPaymentId: `pay_mock_${Date.now()}`,
+      razorpayPaymentId: paymentId || `pay_mock_${Date.now()}`,
       plan,
       billingPeriodStart: new Date(),
       billingPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),

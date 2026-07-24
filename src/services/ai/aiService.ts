@@ -23,9 +23,10 @@ Follow these strict rules for every response:
 1. CONVERSATIONAL & CONCISE: You are chatting on WhatsApp. Keep your responses to 1-3 short sentences. Never send large blocks of text. 
 2. ONE QUESTION AT A TIME: Never ask multiple questions in a single message. Never combine a "Yes/No" question with a multiple-choice menu. Wait for the user to answer the current question before moving forward.
 3. FLEXIBLE SCHEDULING (CRITICAL): When it is time to schedule a site visit, you may suggest 3 available time slots (e.g., "1. Tomorrow at 11 AM", "2. Saturday at 10 AM"). However, if the user ignores the numbered list and suggests their own time (e.g., "Sunday at 4 PM" or "Next week"), YOU MUST ACCEPT THEIR TIME. Do not repeat the menu. Acknowledge their requested time, confirm the booking, and politely conclude the conversation.
-4. NO HALLUCINATIONS: Do not invent properties, prices, or locations. If you need to search inventory, tell the user you are checking and simulate the next step. 
-5. TONE: Be professional, empathetic, and highly accommodating. 
-6. DO NOT REPEAT QUESTIONS: Do not repeat the same Yes/No question or qualification details request if the user has already answered. Move to the next step.
+4. BROCHURE MEDIA HANDLING: When the user asks for a brochure, prospectus, or PDF document, inform them that the brochure file has been attached directly as a media document in WhatsApp. NEVER write or output brochure URLs, website links, or http/https links in your message text.
+5. NO HALLUCINATIONS: Do not invent properties, prices, or locations. If you need to search inventory, tell the user you are checking and simulate the next step. 
+6. TONE: Be professional, empathetic, and highly accommodating. 
+7. DO NOT REPEAT QUESTIONS: Do not repeat the same Yes/No question or qualification details request if the user has already answered. Move to the next step.
 
 Your end goal is to confirm a site visit time without frustrating the user. Adapt to their conversational flow.`;
 
@@ -486,9 +487,86 @@ export const extractLocation = (text: string): string | null => {
   return null;
 };
 
+export const isBrochureRequested = (text: string): boolean => {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  const keywords = [
+    'brochure',
+    'broucher',
+    'brocher',
+    'pdf',
+    'catalog',
+    'catalogue',
+    'prospectus',
+    'property document',
+    'send brochure',
+    'share brochure',
+    'want brochure',
+    'need brochure',
+    'get brochure',
+    'download brochure',
+    'send broucher',
+    'share broucher',
+  ];
+  return keywords.some((kw) => lower.includes(kw));
+};
+
+export const sendBrochureMediaForLead = async (
+  lead: any
+): Promise<{ sent: boolean; propertyTitle: string; filename?: string }> => {
+  let prop: any = null;
+  const tenantId = lead.tenantId;
+
+  if (lead.aiContext?.proposedPropertyId && mongoose.Types.ObjectId.isValid(lead.aiContext.proposedPropertyId)) {
+    try {
+      prop = await Property.findById(lead.aiContext.proposedPropertyId);
+    } catch (_) {}
+  }
+
+  if (!prop) {
+    const properties = await searchProperties(tenantId, lead.location);
+    if (properties && properties.length > 0) {
+      prop = properties[0];
+    } else {
+      prop = await Property.findOne({ tenantId });
+    }
+  }
+
+  if (!prop) {
+    prop = { title: 'Our Project', tenantId };
+  }
+
+  const brochure = await resolvePropertyBrochure(prop);
+  if (brochure && brochure.url) {
+    try {
+      await sendWhatsAppDocument(
+        lead._id.toString(),
+        lead.mobile,
+        brochure.url,
+        brochure.filename,
+        `Brochure for ${prop.title || 'Property'}`
+      );
+      return { sent: true, propertyTitle: prop.title || 'Property', filename: brochure.filename };
+    } catch (err: any) {
+      console.error('[Brochure Send Error]:', err.message);
+    }
+  }
+
+  return { sent: false, propertyTitle: prop.title || 'Property' };
+};
+
 // --- Rule Engine ---
 export const determineBaseResponse = async (lead: any, textMessage: string): Promise<string> => {
   const textLower = textMessage.toLowerCase();
+
+  if (isBrochureRequested(textMessage)) {
+    const brochureResult = await sendBrochureMediaForLead(lead);
+    if (brochureResult.sent) {
+      return `I have sent the property brochure for *${brochureResult.propertyTitle}* as a PDF media document directly to your WhatsApp! 📄 Please review it and let me know if you would like to schedule a site visit or have any questions.`;
+    } else {
+      return `The brochure file for *${brochureResult.propertyTitle}* is currently being updated by our team. I can answer any questions about pricing, amenities, or help schedule a site visit! What would you like to know?`;
+    }
+  }
 
   if (lead.status === 'New' || lead.status === 'Qualifying') {
     const extractedBudget = extractBudgetValue(textMessage);
@@ -944,6 +1022,18 @@ export const processIncomingMessage = async (leadId: string, textMessage: string
     // Rule engine path: mutations and text generation happen together
     const baseResponse = await determineBaseResponse(lead, textMessage);
     aiResponse = await polishWithAI(lead, baseResponse);
+  }
+
+  // If user requested brochure, ensure brochure media document is sent
+  if (isBrochureRequested(textMessage)) {
+    await sendBrochureMediaForLead(lead);
+  }
+
+  // Strip any raw brochure URLs from AI text response to ensure brochure is sent as media file, not bare links
+  if (aiResponse) {
+    aiResponse = aiResponse
+      .replace(/https?:\/\/[^\s]+\.(pdf|doc|docx)/gi, '(attached below as PDF document)')
+      .replace(/https?:\/\/[^\s]*\/uploads\/[^\s]*/gi, '(attached below as PDF document)');
   }
 
   // Re-fetch lead one final time to ensure we persist the latest state

@@ -45,6 +45,13 @@ export const resolvePropertyBrochure = async (property: any): Promise<{ url: str
       if (tenantDoc && tenantDoc.s3Url) {
         relativeOrFullUrl = tenantDoc.s3Url;
         if (tenantDoc.fileName) filename = tenantDoc.fileName;
+      } else {
+        // 3. Fallback to any PDF document in system
+        const anyDoc = await ProjectDocument.findOne({}).sort({ _id: -1 }).lean();
+        if (anyDoc && anyDoc.s3Url) {
+          relativeOrFullUrl = anyDoc.s3Url;
+          if (anyDoc.fileName) filename = anyDoc.fileName;
+        }
       }
     }
   }

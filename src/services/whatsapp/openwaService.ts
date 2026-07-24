@@ -618,11 +618,52 @@ export const sendOpenWADocument = async (
     throw new Error(`[OpenWA Document Error] Socket unavailable for tenant ${tenantId}`);
   }
 
+  // Baileys cannot download localhost/relative URLs.
+  // Resolve the file from disk and pass it as a Buffer so it works in any
+  // environment — local dev, VPS, Docker — without needing a public URL.
+  let documentContent: Buffer | { url: string };
+
+  const isLocalUrl =
+    documentUrl.startsWith('/') ||
+    documentUrl.includes('localhost') ||
+    documentUrl.includes('127.0.0.1') ||
+    documentUrl.includes('0.0.0.0');
+
+  if (isLocalUrl) {
+    // Convert URL path back to an absolute disk path.
+    // Stored URLs look like: /uploads/documents/<tenantId>/<propId>/<file>
+    // The 'uploads' directory sits two levels above this compiled file's directory
+    // (server/dist/services/whatsapp → server/uploads)
+    let relativePath = documentUrl;
+    // Strip any base-URL prefix, keeping only the path segment
+    try {
+      const urlObj = new URL(documentUrl, 'http://localhost');
+      relativePath = urlObj.pathname;
+    } catch (_) {}
+
+    let diskPath = path.join(__dirname, '../../../', relativePath);
+    if (!fs.existsSync(diskPath)) {
+      diskPath = path.join(process.cwd(), relativePath);
+    }
+    console.log(`[OpenWA Document] Reading file from disk: ${diskPath}`);
+
+    if (!fs.existsSync(diskPath)) {
+      throw new Error(`[OpenWA Document Error] File not found on disk: ${diskPath}`);
+    }
+    documentContent = fs.readFileSync(diskPath);
+  } else {
+    // Remote/S3 URL — let Baileys download it directly
+    documentContent = { url: documentUrl };
+  }
+
   const result = await sock.sendMessage(jid, {
-    document: { url: documentUrl },
+    document: documentContent,
     fileName: filename,
+    mimetype: 'application/pdf',
     caption: caption || '',
   });
+
+  console.log(`[OpenWA Document Success] Delivered "${filename}" to ${jid}`);
 
   return {
     success: true,
@@ -653,8 +694,31 @@ export const sendOpenWAImage = async (tenantId: string, to: string, imageUrl: st
     throw new Error(`[OpenWA Image Error] Socket unavailable for tenant ${tenantId}`);
   }
 
+  // Same local-file resolution as sendOpenWADocument
+  let imageContent: Buffer | { url: string };
+  const isLocalUrl =
+    imageUrl.startsWith('/') ||
+    imageUrl.includes('localhost') ||
+    imageUrl.includes('127.0.0.1') ||
+    imageUrl.includes('0.0.0.0');
+
+  if (isLocalUrl) {
+    let relativePath = imageUrl;
+    try {
+      const urlObj = new URL(imageUrl, 'http://localhost');
+      relativePath = urlObj.pathname;
+    } catch (_) {}
+    const diskPath = path.join(__dirname, '../../../', relativePath);
+    if (!fs.existsSync(diskPath)) {
+      throw new Error(`[OpenWA Image Error] File not found on disk: ${diskPath}`);
+    }
+    imageContent = fs.readFileSync(diskPath);
+  } else {
+    imageContent = { url: imageUrl };
+  }
+
   const result = await sock.sendMessage(jid, {
-    image: { url: imageUrl },
+    image: imageContent,
     caption: caption || '',
   });
 
