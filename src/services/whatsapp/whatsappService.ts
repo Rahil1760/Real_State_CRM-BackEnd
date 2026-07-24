@@ -442,7 +442,6 @@ export const sendWhatsAppDocument = async (
         actor: 'AI',
         details: logMessage,
       });
-      lead.chatHistory.push({ role: 'model', text: logMessage });
       lead.aiContext.chatHistory = (lead.aiContext.chatHistory || '') + `\nAgent sent document: ${filename}`;
       await lead.save();
 
@@ -771,21 +770,8 @@ export const runRuleBasedAssistant = async (lead: any, textMessage: string, io: 
       const properties = await searchProperties(lead.budget, lead.location, lead.propertyType);
       if (properties.length > 0) {
         const prop = properties[0];
-        const brochure = await resolvePropertyBrochure(prop);
         aiResponse = `Congratulations! You are now qualified. I found a match: *${prop.title}* at ${prop.location} for \u20b9${prop.price.toLocaleString()}.\nAmenities: ${prop.amenities.join(', ')}.\n\nWould you like to schedule a site visit? Reply with **Yes** or **No**.`;
         lead.status = 'Qualified'; // Move to Stage 3
-
-        if (brochure) {
-          setTimeout(async () => {
-            await sendWhatsAppDocument(
-              lead._id.toString(),
-              lead.mobile,
-              brochure.url,
-              brochure.filename,
-              `Brochure for ${prop.title}`
-            );
-          }, 2000);
-        }
       } else {
         aiResponse = `Thank you for completing your profile! Let me search our inventory for properties in ${lead.location} below â‚¹${lead.budget.toLocaleString()}. We will get back to you shortly.`;
       }

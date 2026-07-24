@@ -3,8 +3,12 @@ import Property from '../../models/Property';
 import { generateLLMResponse } from './llmProviderService';
 
 export const runAgentConversation = async (lead: ILead, textMessage: string): Promise<string> => {
+  const resolvedTenantId = lead.tenantId && typeof lead.tenantId === 'object' && '_id' in lead.tenantId 
+    ? (lead.tenantId as any)._id.toString() 
+    : (lead.tenantId as any)?.toString();
+
   // Build system instruction prompt with lead context
-  const allProperties = await Property.find({ tenantId: lead.tenantId });
+  const allProperties = await Property.find({ tenantId: resolvedTenantId });
   const uniqueLocations = Array.from(new Set(allProperties.map(p => p.location).filter(Boolean)));
   const locationsStr = uniqueLocations.join(', ') || 'None';
 
@@ -105,7 +109,16 @@ If the lead asks to speak to a human, call a representative, or escalate, share 
     console.error('Failed to fetch team contacts for agent prompt:', err);
   }
 
-  const systemInstruction = `You are Aura, the intelligent and Welcoming AI assistant for RealtyCloudai real estate. 
+  let companyName = 'our real estate platform';
+  try {
+    const Tenant = require('../../models/Tenant').default;
+    const tenant = await Tenant.findById(resolvedTenantId);
+    if (tenant) {
+      companyName = tenant.name || companyName;
+    }
+  } catch (_) {}
+
+  const systemInstruction = `You are Aura, the intelligent and Welcoming AI assistant for ${companyName}. 
 Your primary goal is to qualify leads by collecting their property preferences (budget, location, property type, and intent) and scheduling a site visit.
 
 Follow these strict rules for every response:
@@ -123,9 +136,9 @@ ${locationConstraintText}
 === CURRENT LEAD STATE ===
 - Lead Name: ${lead.name}
 - Lead ID: ${lead._id}
-- Tenant ID: ${lead.tenantId}
+- Tenant ID: ${resolvedTenantId}
 - Current Status: ${lead.status}
-- Budget: ${lead.budget ? 'â‚¹' + lead.budget.toLocaleString() : 'Not provided'}
+- Budget: ${lead.budget ? '₹' + lead.budget.toLocaleString() : 'Not provided'}
 - Preferred Location: ${lead.location || 'Not provided'}
 - Property Type: ${lead.propertyType}
 - Purpose: ${lead.purpose}

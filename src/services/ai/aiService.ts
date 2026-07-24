@@ -31,6 +31,11 @@ Follow these strict rules for every response:
 Your end goal is to confirm a site visit time without frustrating the user. Adapt to their conversational flow.`;
 
 export const system_Prompt = async (lead: ILead): Promise<string> => {
+  const resolvedTenantId = lead.tenantId && typeof lead.tenantId === 'object' && '_id' in lead.tenantId 
+    ? (lead.tenantId as any)._id.toString() 
+    : (lead.tenantId as any)?.toString();
+
+  let companyName = 'RealtyCloudai real estate';
   let teamContactsContext = '';
   try {
     const User = require('../../models/User').default;
@@ -53,7 +58,7 @@ export const system_Prompt = async (lead: ILead): Promise<string> => {
     // 2. If no assigned user with a phone number, look for any Sales Executive under this tenant
     if (!contactPerson) {
       const exec = await User.findOne({
-        tenantId: lead.tenantId,
+        tenantId: resolvedTenantId,
         role: 'Sales Executive',
         phone: { $ne: '' }
       });
@@ -69,7 +74,7 @@ export const system_Prompt = async (lead: ILead): Promise<string> => {
     // 3. If no Sales Executive, look for any Sales Manager under this tenant
     if (!contactPerson) {
       const manager = await User.findOne({
-        tenantId: lead.tenantId,
+        tenantId: resolvedTenantId,
         role: 'Sales Manager',
         phone: { $ne: '' }
       });
@@ -84,13 +89,16 @@ export const system_Prompt = async (lead: ILead): Promise<string> => {
 
     // 4. If no Sales Executive or Sales Manager, share the Tenant Admin's number
     if (!contactPerson) {
-      const tenant = await Tenant.findById(lead.tenantId);
-      if (tenant && tenant.phone) {
-        contactPerson = {
-          name: tenant.name,
-          role: 'Admin',
-          phone: tenant.phone
-        };
+      const tenant = await Tenant.findById(resolvedTenantId);
+      if (tenant) {
+        companyName = tenant.name || companyName;
+        if (tenant.phone) {
+          contactPerson = {
+            name: tenant.name,
+            role: 'Admin',
+            phone: tenant.phone
+          };
+        }
       }
     }
 
@@ -107,7 +115,7 @@ If the lead asks to speak to a human, call a representative, or escalate, share 
     console.error('Failed to fetch team contacts for prompt:', err);
   }
 
-  const allProperties = await Property.find({ tenantId: lead.tenantId });
+  const allProperties = await Property.find({ tenantId: resolvedTenantId });
   const uniqueLocations = Array.from(new Set(allProperties.map(p => p.location).filter(Boolean)));
   const locationsStr = uniqueLocations.join(', ') || 'None';
   console.log(locationsStr, 'location')
@@ -120,10 +128,12 @@ CRITICAL RULE: When proposing, recommending, or discussing project locations, yo
 
   const isFirstInteraction = !lead.chatHistory || lead.chatHistory.length === 0;
 
+  const dynamicSystemPrompt = AURA_SYSTEM_PROMPT.replace('RealtyCloudai real estate', companyName);
+
   if (isFirstInteraction) {
-    return `${AURA_SYSTEM_PROMPT}\n\n${teamContactsContext}\n\n${locationConstraintText}`;
+    return `${dynamicSystemPrompt}\n\n${teamContactsContext}\n\n${locationConstraintText}`;
   }
-  const propertyDetails = await Property.findOne({ tenantId: lead.tenantId });
+  const propertyDetails = await Property.findOne({ tenantId: resolvedTenantId });
 
   let propertyContext = '';
   if (lead.aiContext?.proposedPropertyId) {
@@ -174,7 +184,7 @@ Proposed Property Details (already presented to the lead â€” do NOT re-intr
     .map((msg: any) => `${msg.role === 'user' ? 'User' : 'Aura'}: ${msg.text}`)
     .join('\n');
 
-  return `${AURA_SYSTEM_PROMPT}
+  return `${dynamicSystemPrompt}
 
 ${teamContactsContext}
 
@@ -478,12 +488,42 @@ export const extractPurpose = (text: string): 'Buy' | 'Invest' | null => {
   return null;
 };
 
-export const extractLocation = (text: string): string | null => {
-  const t = text.toLowerCase();
-  const locations = ['downtown', 'whitefield', 'brookfield', 'indiranagar', 'uptown', 'suburb', 'koramangala', 'nashik', 'nasik'];
-  for (const loc of locations) {
-    if (t.includes(loc)) return loc.charAt(0).toUpperCase() + loc.slice(1);
+export const extractLocation = async (text: string, tenantId?: string): Promise<string | null> => {
+  const t = text.toLowerCase().trim();
+
+  if (tenantId) {
+    try {
+      const properties = await Property.find({ tenantId });
+      for (const p of properties) {
+        if (p.location) {
+          const locLower = p.location.toLowerCase();
+          if (t.includes(locLower) || locLower.includes(t)) {
+            return p.location;
+          }
+          const parts = p.location.split(',').map(part => part.trim().toLowerCase());
+          for (const part of parts) {
+            if (part && part.length > 2 && (t.includes(part) || part.includes(t))) {
+              return p.location;
+            }
+          }
+        }
+      }
+    } catch (_) {}
   }
+
+  const locations = ['downtown', 'whitefield', 'brookfield', 'indiranagar', 'uptown', 'suburb', 'koramangala', 'nashik', 'nasik', 'khode nagar', 'khodenagar'];
+  for (const loc of locations) {
+    if (t.includes(loc)) {
+      if (loc === 'nasik' || loc === 'nashik') return 'Nashik';
+      return loc.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    }
+  }
+
+  const exclusions = ['hi', 'hello', 'hey', 'yes', 'no', 'sure', 'ok', 'okay', 'broucher', 'brochure', 'pdf'];
+  if (t.length > 2 && t.length < 40 && !exclusions.some(w => t.startsWith(w))) {
+    return text.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  }
+
   return null;
 };
 
@@ -559,13 +599,84 @@ export const sendBrochureMediaForLead = async (
 export const determineBaseResponse = async (lead: any, textMessage: string): Promise<string> => {
   const textLower = textMessage.toLowerCase();
 
+  // 1. Brochure Request Handling
   if (isBrochureRequested(textMessage)) {
-    const brochureResult = await sendBrochureMediaForLead(lead);
-    if (brochureResult.sent) {
-      return `I have sent the property brochure for *${brochureResult.propertyTitle}* as a PDF media document directly to your WhatsApp! 📄 Please review it and let me know if you would like to schedule a site visit or have any questions.`;
+    let propTitle = 'our property';
+    if (lead.aiContext?.proposedPropertyId && mongoose.Types.ObjectId.isValid(lead.aiContext.proposedPropertyId)) {
+      try {
+        const prop = await Property.findById(lead.aiContext.proposedPropertyId);
+        if (prop) propTitle = prop.title;
+      } catch (_) {}
     } else {
-      return `The brochure file for *${brochureResult.propertyTitle}* is currently being updated by our team. I can answer any questions about pricing, amenities, or help schedule a site visit! What would you like to know?`;
+      const properties = await Property.find({ tenantId: lead.tenantId });
+      if (properties.length > 0) {
+        propTitle = properties[0].title;
+        lead.aiContext = lead.aiContext || {};
+        lead.aiContext.proposedPropertyId = properties[0]._id.toString();
+      }
     }
+    return `I have sent the property brochure for *${propTitle}* as a PDF document directly to your WhatsApp conversation! 📄 Please review it and let me know if you would like to schedule a site visit or have any questions.`;
+  }
+
+  // 2. Freeform Date/Time Site Visit Parsing (Applies across all active lead statuses)
+  const freeformDate = parseFreeformDate(textMessage);
+  if (freeformDate) {
+    let propId = lead.aiContext?.proposedPropertyId;
+    let propTitle = 'our property';
+
+    if (!propId || !mongoose.Types.ObjectId.isValid(propId)) {
+      const properties = await Property.find({ tenantId: lead.tenantId });
+      if (properties.length > 0) {
+        propId = properties[0]._id.toString();
+        propTitle = properties[0].title;
+      } else {
+        propId = MOCK_PROPERTY_ID;
+      }
+      lead.aiContext = lead.aiContext || {};
+      lead.aiContext.proposedPropertyId = propId;
+    } else {
+      try {
+        const prop = await Property.findById(propId);
+        if (prop) propTitle = prop.title;
+      } catch (_) {}
+    }
+
+    const result = await scheduleVisit(lead._id.toString(), propId, freeformDate.toISOString());
+    if (result.success) {
+      lead.status = 'Visit Scheduled';
+      return `Your site visit for *${propTitle}* is confirmed for ${freeformDate.toLocaleString()}! We look forward to meeting you! 🏡`;
+    }
+  }
+
+  // 3. Site Visit Intent Request ("schedule a visit", "book visit", "visit")
+  const isVisitIntent = ['schedule a visit', 'schedule visit', 'book visit', 'book site visit', 'site visit', 'want to visit', 'like to visit'].some((w) => textLower.includes(w));
+  if (isVisitIntent && lead.status !== 'Visit Scheduled') {
+    let propId = lead.aiContext?.proposedPropertyId;
+    let propTitle = 'our property';
+
+    if (!propId || !mongoose.Types.ObjectId.isValid(propId)) {
+      const properties = await Property.find({ tenantId: lead.tenantId });
+      if (properties.length > 0) {
+        propId = properties[0]._id.toString();
+        propTitle = properties[0].title;
+      } else {
+        propId = MOCK_PROPERTY_ID;
+      }
+      lead.aiContext = lead.aiContext || {};
+      lead.aiContext.proposedPropertyId = propId;
+    } else {
+      try {
+        const prop = await Property.findById(propId);
+        if (prop) propTitle = prop.title;
+      } catch (_) {}
+    }
+
+    lead.status = 'Slot Pending';
+    lead.aiContext = lead.aiContext || {};
+    lead.aiContext.selectedVisitDay = '';
+    lead.aiContext.selectedVisitPeriod = '';
+
+    return `Great! Which day of the week (Monday to Sunday) or date/time would you prefer for the site visit to *${propTitle}*?`;
   }
 
   if (lead.status === 'New' || lead.status === 'Qualifying') {
@@ -578,26 +689,60 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
     const extractedPurpose = extractPurpose(textMessage);
     if (extractedPurpose && (!lead.purpose || lead.purpose === 'Any')) lead.purpose = extractedPurpose;
 
-    const extractedLoc = extractLocation(textMessage);
+    const resolvedTenantId = lead.tenantId && typeof lead.tenantId === 'object' && '_id' in lead.tenantId 
+      ? (lead.tenantId as any)._id.toString() 
+      : (lead.tenantId as any)?.toString();
+
+    const extractedLoc = await extractLocation(textMessage, resolvedTenantId);
     if (extractedLoc && (!lead.location || lead.location.trim() === '')) lead.location = extractedLoc;
 
     if (lead.status === 'New') lead.status = 'Qualifying';
 
-    if (!lead.budget || lead.budget <= 0)
-      return "Could you please tell me your budget (e.g., 50 Lakhs, 1 Crore)?";
-    if (!lead.location || lead.location.trim() === '')
-      return "What is your preferred location for the property?";
-    if (!lead.propertyType || lead.propertyType === 'Any')
-      return "What type of property are you looking for? (Apartment, Villa, Plot, or Commercial)";
-    if (!lead.purpose || lead.purpose === 'Any')
-      return "Are you looking to buy or invest?";
+    const firstName = lead.name ? lead.name.split(' ')[0] : '';
+    const namePrefix = firstName ? `${firstName}, ` : '';
+
+    if (!lead.budget || lead.budget <= 0) {
+      const budgetOptions = [
+        `Could you please share your target budget for the property (e.g., 50 Lakhs, 1 Crore)?`,
+        `What price range or budget do you have in mind?`,
+        `${namePrefix}what is your approximate budget limit for this purchase?`
+      ];
+      return budgetOptions[Math.floor(Math.random() * budgetOptions.length)];
+    }
+
+    if (!lead.location || lead.location.trim() === '') {
+      const locOptions = [
+        `Which location or area would you prefer for the property?`,
+        `Could you share your preferred location or neighborhood?`,
+        `${namePrefix}where in town would you like your ideal property to be located?`
+      ];
+      return locOptions[Math.floor(Math.random() * locOptions.length)];
+    }
+
+    if (!lead.propertyType || lead.propertyType === 'Any') {
+      const typeOptions = [
+        `What type of property are you looking for? (Apartment, Villa, Plot, or Commercial)`,
+        `Which property category fits your needs best? (Apartment, Villa, Plot, or Commercial)`,
+        `Are you interested in an Apartment, Villa, Plot, or Commercial property?`
+      ];
+      return typeOptions[Math.floor(Math.random() * typeOptions.length)];
+    }
+
+    if (!lead.purpose || lead.purpose === 'Any') {
+      const purposeOptions = [
+        `Are you planning to buy for self-use or invest for returns?`,
+        `Is this purchase for your personal residence (buy) or investment?`,
+        `Are you looking to buy to live in, or to invest?`
+      ];
+      return purposeOptions[Math.floor(Math.random() * purposeOptions.length)];
+    }
 
     lead.status = 'Qualified';
     lead.timeline.push({
       event: 'Lead Qualified',
       timestamp: new Date(),
       actor: 'AI',
-      details: `Requirements: Budget â‚¹${lead.budget}, Location: ${lead.location}, Type: ${lead.propertyType}, Purpose: ${lead.purpose}`,
+      details: `Requirements: Budget ₹${lead.budget}, Location: ${lead.location}, Type: ${lead.propertyType}, Purpose: ${lead.purpose}`,
     });
 
     const properties = await searchProperties(lead.tenantId);
@@ -606,33 +751,22 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
       lead.aiContext = lead.aiContext || {};
       lead.aiContext.proposedPropertyId = prop._id.toString();
 
-      const brochure = await resolvePropertyBrochure(prop);
-      if (brochure) {
-        setTimeout(async () => {
-          await sendWhatsAppDocument(
-            lead._id.toString(),
-            lead.mobile,
-            brochure.url,
-            brochure.filename,
-            `Brochure for ${prop.title}`
-          );
-        }, 1000);
-      }
-
-      return `Great news! I found a match: *${prop.title}* at ${prop.location} for \u20b9${prop.price.toLocaleString()}.\nAmenities: ${prop.amenities.join(', ')}.\n\nIf you'd like to visit this property, please share a suitable date and time. I'll help schedule a site visit according to your convenience.`;
+      return `Great news${firstName ? ' ' + firstName : ''}! I found a match: *${prop.title}* at ${prop.location} for ₹${prop.price.toLocaleString()}.\nAmenities: ${prop.amenities.join(', ')}.\n\nIf you'd like to visit this property, please share a suitable date and time. I'll help schedule a site visit according to your convenience.`;
     }
     lead.aiContext = lead.aiContext || {};
     lead.aiContext.proposedPropertyId = MOCK_PROPERTY_ID;
-    return `Great news! I found a match: *Aura Premium Heights* at Downtown for \u20b91.5 Cr.\nAmenities: Gym, Pool.\n\nWould you like to schedule a site visit? Reply with *Yes* or *No*.`;
+    return `Great news! I found a match for your preferences. Would you like to schedule a site visit? Please let me know a suitable date and time!`;
   }
 
+
+
   if (lead.status === 'Qualified') {
-    const isYes = ['yes', 'interested', 'sure', 'ok', 'okay', 'haan', 'yep', 'yup'].some((w) => textLower.includes(w));
+    const isYes = ['yes', 'interested', 'sure', 'ok', 'okay', 'haan', 'yep', 'yup', 'visit', 'schedule', 'book', 'slot', 'site visit', 'fine'].some((w) => textLower.includes(w));
     const isNo = ['no', 'not interested', 'nope', 'nahi'].some((w) => textLower.includes(w));
 
     if (isYes) {
       let propId = lead.aiContext?.proposedPropertyId;
-      let propTitle = 'Aura Premium Heights';
+      let propTitle = 'our property';
 
       if (!propId) {
         const properties = await searchProperties(lead.tenantId);
@@ -642,13 +776,13 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
           propTitle = prop.title;
         } else {
           propId = MOCK_PROPERTY_ID;
-          propTitle = 'Aura Premium Heights';
+          propTitle = 'our property';
         }
         lead.aiContext = lead.aiContext || {};
         lead.aiContext.proposedPropertyId = propId;
       } else {
         if (propId === MOCK_PROPERTY_ID || propId === 'mock_property_id') {
-          propTitle = 'Aura Premium Heights';
+          propTitle = 'our property';
         } else if (mongoose.Types.ObjectId.isValid(propId)) {
           try {
             const prop = await Property.findById(propId);
@@ -668,7 +802,7 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
         details: `Lead expressed interest. Requesting visit day choice for property ${propId}`,
       });
 
-      return `Great! Which day of the week (Monday to Sunday) would you prefer for the site visit to *${propTitle}*?`;
+      return `Great! Which day of the week (Monday to Sunday) or date/time would you prefer for the site visit to *${propTitle}*?`;
     }
 
     if (isNo) {
@@ -697,7 +831,7 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
     if (!lead.aiContext?.selectedVisitDay) {
       const matchedDay = extractDay(textMessage);
       if (!matchedDay) {
-        return `Please choose a day from Monday to Sunday for your site visit.`;
+        return `Please choose a day from Monday to Sunday or a specific date/time for your site visit.`;
       }
 
       lead.aiContext = lead.aiContext || {};
@@ -941,7 +1075,11 @@ export const processIncomingMessage = async (leadId: string, textMessage: string
   // Semantic FAQ Cache Check
   const proposedPropertyId = lead.aiContext?.proposedPropertyId;
   if (proposedPropertyId && mongoose.Types.ObjectId.isValid(proposedPropertyId) && proposedPropertyId !== MOCK_PROPERTY_ID) {
-    const cacheResult = await checkFaqCache(textMessage, lead.tenantId.toString(), proposedPropertyId);
+    const resolvedTenantId = lead.tenantId && typeof lead.tenantId === 'object' && '_id' in lead.tenantId 
+      ? (lead.tenantId as any)._id.toString() 
+      : (lead.tenantId as any)?.toString();
+
+    const cacheResult = await checkFaqCache(textMessage, resolvedTenantId, proposedPropertyId);
     if (cacheResult) {
       console.log(`[FAQ Cache Hit] Tenant: ${lead.tenantId}, Project: ${proposedPropertyId}, Category: ${cacheResult.category}, Score: ${cacheResult.score}`);
 

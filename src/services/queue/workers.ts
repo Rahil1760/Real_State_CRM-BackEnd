@@ -135,19 +135,8 @@ export const initWorkers = () => {
         const properties = await searchProperties(lead.tenantId.toString());
         if (properties.length > 0) {
           const prop = properties[0];
-          const brochure = await resolvePropertyBrochure(prop);
           const text = `Hi ${lead.name}, we found a property match: *${prop.title}* at ${prop.location} for \u20b9${prop.price.toLocaleString()}.\nWould you like to schedule a site visit?`;
           await sendWhatsAppText(lead._id.toString(), lead.mobile, text);
-
-          if (brochure) {
-            await sendWhatsAppDocument(
-              lead._id.toString(),
-              lead.mobile,
-              brochure.url,
-              brochure.filename,
-              `Brochure for ${prop.title}`
-            );
-          }
         }
       }
     },

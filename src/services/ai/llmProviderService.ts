@@ -202,12 +202,26 @@ export const generateLLMResponse = async (
     ? `${systemInstruction}\n\n${ragContext}`
     : systemInstruction;
 
-  // Step 2: Single LLM call
+  // Step 2: Single LLM call with provider fallback
   const provider = process.env.LLM_PROVIDER || 'gemini';
-  if (provider === 'groq') {
-    return await callGroq(enrichedInstruction, history, textMessage);
-  } else {
-    return await callGemini(enrichedInstruction, history, textMessage);
+  try {
+    if (provider === 'groq') {
+      return await callGroq(enrichedInstruction, history, textMessage);
+    } else {
+      return await callGemini(enrichedInstruction, history, textMessage);
+    }
+  } catch (primaryErr: any) {
+    console.warn(`[LLM Provider Fallback] Primary provider (${provider}) failed: ${primaryErr.message}. Trying secondary provider...`);
+    try {
+      if (provider === 'groq' && process.env.GEMINI_API_KEY && !process.env.GEMINI_API_KEY.startsWith('mock')) {
+        return await callGemini(enrichedInstruction, history, textMessage);
+      } else if (provider === 'gemini' && process.env.GROQ_API_KEY && !process.env.GROQ_API_KEY.startsWith('mock')) {
+        return await callGroq(enrichedInstruction, history, textMessage);
+      }
+    } catch (fallbackErr: any) {
+      console.error('[LLM Provider Fallback] Secondary provider also failed:', fallbackErr.message);
+    }
+    throw primaryErr;
   }
 };
 

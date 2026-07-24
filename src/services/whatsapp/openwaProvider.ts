@@ -11,8 +11,10 @@ import Property from '../../models/Property';
 export class OpenWAProvider implements WhatsAppProvider {
   private tenantId: string;
 
-  constructor(tenantId: string) {
-    this.tenantId = tenantId;
+  constructor(tenantId: any) {
+    this.tenantId = tenantId && typeof tenantId === 'object' && '_id' in tenantId 
+      ? (tenantId as any)._id.toString() 
+      : tenantId?.toString();
   }
 
   async sendText(to: string, message: string): Promise<any> {
