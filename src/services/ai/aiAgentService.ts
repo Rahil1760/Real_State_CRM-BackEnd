@@ -1,8 +1,15 @@
 import Lead, { ILead } from '../../models/Lead';
 import Property from '../../models/Property';
+import Tenant from '../../models/Tenant';
 import { generateLLMResponse } from './llmProviderService';
+import { resolvePropertyBrochure } from '../whatsapp/whatsappService';
 
 export const runAgentConversation = async (lead: ILead, textMessage: string): Promise<string> => {
+  // Fetch tenant info for dynamic company and bot names
+  const tenant = await Tenant.findById(lead.tenantId);
+  const companyName = tenant?.name || 'RealtyCloudai';
+  const botName = tenant?.senderDisplayName || 'Kayra';
+
   // Build system instruction prompt with lead context
   const allProperties = await Property.find({ tenantId: lead.tenantId });
   const uniqueLocations = Array.from(new Set(allProperties.map(p => p.location).filter(Boolean)));
@@ -15,6 +22,7 @@ CRITICAL RULE: When proposing, recommending, or discussing project locations, yo
 `;
 
   let proposedPropertyContext = '';
+  let brochureInfo = '';
 
   if (lead.aiContext?.proposedPropertyId) {
     const prop = await Property.findById(lead.aiContext.proposedPropertyId);
@@ -24,18 +32,25 @@ Proposed Property Details:
 - ID: ${prop._id}
 - Title: ${prop.title}
 - Location: ${prop.location}
-- Price: â‚¹${prop.price.toLocaleString()}
+- Price: ₹${prop.price.toLocaleString()}
 `;
+
+      const brochure = await resolvePropertyBrochure(prop);
+      if (brochure) {
+        brochureInfo = `
+=== BROCHURE AVAILABILITY ===
+A PDF brochure is available for "${prop.title}". If the lead explicitly asks for the brochure, layout, details, or PDF, tell them you are sending it. The system will deliver the document automatically.
+`;
+      }
     }
   }
 
   let teamContactsContext = '';
   try {
     const User = require('../../models/User').default;
-    const Tenant = require('../../models/Tenant').default;
-    
+
     let contactPerson: { name: string; role: string; phone: string } | null = null;
-    
+
     // 1. Share mobile numbers to assigned sales executive or sales manager
     if (lead.assignedTo) {
       const assignedUser = await User.findById(lead.assignedTo);
@@ -47,7 +62,7 @@ Proposed Property Details:
         };
       }
     }
-    
+
     // 2. If no assigned user with a phone number, look for any Sales Executive under this tenant
     if (!contactPerson) {
       const exec = await User.findOne({
@@ -63,7 +78,7 @@ Proposed Property Details:
         };
       }
     }
-    
+
     // 3. If no Sales Executive, look for any Sales Manager under this tenant
     if (!contactPerson) {
       const manager = await User.findOne({
@@ -79,10 +94,9 @@ Proposed Property Details:
         };
       }
     }
-    
+
     // 4. If no Sales Executive or Sales Manager, share the Tenant Admin's number
     if (!contactPerson) {
-      const tenant = await Tenant.findById(lead.tenantId);
       if (tenant && tenant.phone) {
         contactPerson = {
           name: tenant.name,
@@ -91,7 +105,7 @@ Proposed Property Details:
         };
       }
     }
-    
+
     if (contactPerson) {
       teamContactsContext = `
 === CONCERNED REPRESENTATIVE CONTACT ===
@@ -105,7 +119,7 @@ If the lead asks to speak to a human, call a representative, or escalate, share 
     console.error('Failed to fetch team contacts for agent prompt:', err);
   }
 
-  const systemInstruction = `You are Aura, the intelligent and Welcoming AI assistant for RealtyCloudai real estate. 
+  const systemInstruction = `You are ${botName}, the intelligent and welcoming AI assistant for ${companyName}. 
 Your primary goal is to qualify leads by collecting their property preferences (budget, location, property type, and intent) and scheduling a site visit.
 
 Follow these strict rules for every response:
@@ -119,12 +133,14 @@ ${teamContactsContext}
 
 ${locationConstraintText}
 
+${brochureInfo}
+
 === CURRENT LEAD STATE ===
 - Lead Name: ${lead.name}
 - Lead ID: ${lead._id}
 - Tenant ID: ${lead.tenantId}
 - Current Status: ${lead.status}
-- Budget: ${lead.budget ? 'â‚¹' + lead.budget.toLocaleString() : 'Not provided'}
+- Budget: ${lead.budget ? '₹' + lead.budget.toLocaleString() : 'Not provided'}
 - Preferred Location: ${lead.location || 'Not provided'}
 - Property Type: ${lead.propertyType}
 - Purpose: ${lead.purpose}

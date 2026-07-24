@@ -12,8 +12,6 @@ import { checkFaqCache } from './semanticCache';
 import { analyzeFeedbackSentiment } from './llmProviderService';
 import User from '../../models/User';
 
-const MOCK_PROPERTY_ID = '507f1f77bcf86cd799439011';
-
 export const AURA_SYSTEM_PROMPT = `You are Kayra, the intelligent and welcoming AI assistant for RealtyCloudai real estate. 
 
 Your primary goal is to qualify leads by collecting their property preferences (budget, location, property type, and intent) and seamlessly scheduling a site visit. 
@@ -31,9 +29,18 @@ Your end goal is to confirm a site visit time without frustrating the user. Adap
 
 export const system_Prompt = async (lead: ILead): Promise<string> => {
   let teamContactsContext = '';
+  let companyName = 'RealtyCloudai';
+  let botName = 'Kayra';
+
   try {
     const User = require('../../models/User').default;
     const Tenant = require('../../models/Tenant').default;
+
+    const tenant = await Tenant.findById(lead.tenantId);
+    if (tenant) {
+      companyName = tenant.name || companyName;
+      botName = tenant.senderDisplayName || botName;
+    }
 
     let contactPerson: { name: string; role: string; phone: string } | null = null;
 
@@ -117,26 +124,31 @@ Active project locations for this tenant: [${locationsStr}]
 CRITICAL RULE: When proposing, recommending, or discussing project locations, you MUST only suggest or mention locations from the active list above. Do NOT suggest or guess other locations if they are not in this list.
 `;
 
+  const promptTemplate = `You are ${botName}, the intelligent and welcoming AI assistant for ${companyName} real estate. 
+
+Your primary goal is to qualify leads by collecting their property preferences (budget, location, property type, and intent) and seamlessly scheduling a site visit. 
+
+Follow these strict rules for every response:
+
+1. CONVERSATIONAL & CONCISE: You are chatting on WhatsApp. Keep your responses to 1-3 short sentences. Never send large blocks of text. 
+2. ONE QUESTION AT A TIME: Never ask multiple questions in a single message. Never combine a "Yes/No" question with a multiple-choice menu. Wait for the user to answer the current question before moving forward.
+3. FLEXIBLE SCHEDULING (CRITICAL): When it is time to schedule a site visit, you may suggest 3 available time slots (e.g., "1. Tomorrow at 11 AM", "2. Saturday at 10 AM"). However, if the user ignores the numbered list and suggests their own time (e.g., "Sunday at 4 PM" or "Next week"), YOU MUST ACCEPT THEIR TIME. Do not repeat the menu. Acknowledge their requested time, confirm the booking, and politely conclude the conversation.
+4. NO HALLUCINATIONS: Do not invent properties, prices, or locations. If you need to search inventory, tell the user you are checking and simulate the next step. 
+5. TONE: Be professional, empathetic, and highly accommodating. 
+6. DO NOT REPEAT QUESTIONS: Do not repeat the same Yes/No question or qualification details request if the user has already answered. Move to the next step.
+
+Your end goal is to confirm a site visit time without frustrating the user. Adapt to their conversational flow.`;
+
   const isFirstInteraction = !lead.chatHistory || lead.chatHistory.length === 0;
 
   if (isFirstInteraction) {
-    return `${AURA_SYSTEM_PROMPT}\n\n${teamContactsContext}\n\n${locationConstraintText}`;
+    return `${promptTemplate}\n\n${teamContactsContext}\n\n${locationConstraintText}`;
   }
-  const propertyDetails = await Property.findOne({ tenantId: lead.tenantId });
 
   let propertyContext = '';
   if (lead.aiContext?.proposedPropertyId) {
     const propId = lead.aiContext.proposedPropertyId;
-    if (propId === MOCK_PROPERTY_ID || propId === 'mock_property_id') {
-      propertyContext = `
-Proposed Property Details (already presented to the lead â€” do NOT re-introduce it):
-- Title: ${propertyDetails?.title}
-- Location: ${propertyDetails?.location}
-- Price: ${propertyDetails?.price.toLocaleString()}
-- Amenities: ${propertyDetails?.amenities?.join(', ')}
-- Description: ${propertyDetails?.description}
-`;
-    } else if (mongoose.Types.ObjectId.isValid(propId)) {
+    if (mongoose.Types.ObjectId.isValid(propId)) {
       try {
         const prop = await Property.findById(propId);
         if (prop) {
@@ -173,7 +185,7 @@ Proposed Property Details (already presented to the lead â€” do NOT re-intr
     .map((msg: any) => `${msg.role === 'user' ? 'User' : 'Aura'}: ${msg.text}`)
     .join('\n');
 
-  return `${AURA_SYSTEM_PROMPT}
+  return `${promptTemplate}
 
 ${teamContactsContext}
 
@@ -241,10 +253,7 @@ export const scheduleVisit = async (
     let propObjId: any = propertyId;
     let property = null;
 
-    if (propertyId === MOCK_PROPERTY_ID || propertyId === 'mock_property_id') {
-      property = { title: 'Aura Premium Heights' };
-      propObjId = new mongoose.Types.ObjectId(MOCK_PROPERTY_ID);
-    } else if (mongoose.Types.ObjectId.isValid(propertyId)) {
+    if (mongoose.Types.ObjectId.isValid(propertyId)) {
       property = await Property.findById(propertyId);
     }
 
@@ -478,11 +487,6 @@ export const extractPurpose = (text: string): 'Buy' | 'Invest' | null => {
 };
 
 export const extractLocation = (text: string): string | null => {
-  const t = text.toLowerCase();
-  const locations = ['downtown', 'whitefield', 'brookfield', 'indiranagar', 'uptown', 'suburb', 'koramangala', 'nashik', 'nasik'];
-  for (const loc of locations) {
-    if (t.includes(loc)) return loc.charAt(0).toUpperCase() + loc.slice(1);
-  }
   return null;
 };
 
@@ -543,9 +547,7 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
 
       return `Great news! I found a match: *${prop.title}* at ${prop.location} for \u20b9${prop.price.toLocaleString()}.\nAmenities: ${prop.amenities.join(', ')}.\n\nIf you'd like to visit this property, please share a suitable date and time. I'll help schedule a site visit according to your convenience.`;
     }
-    lead.aiContext = lead.aiContext || {};
-    lead.aiContext.proposedPropertyId = MOCK_PROPERTY_ID;
-    return `Great news! I found a match: *Aura Premium Heights* at Downtown for \u20b91.5 Cr.\nAmenities: Gym, Pool.\n\nWould you like to schedule a site visit? Reply with *Yes* or *No*.`;
+    return `Currently, we do not have active listings matching your profile, but let me check with our team to find the best options.`;
   }
 
   if (lead.status === 'Qualified') {
@@ -554,7 +556,7 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
 
     if (isYes) {
       let propId = lead.aiContext?.proposedPropertyId;
-      let propTitle = 'Aura Premium Heights';
+      let propTitle = '';
 
       if (!propId) {
         const properties = await searchProperties(lead.tenantId);
@@ -562,20 +564,25 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
         if (prop) {
           propId = prop._id.toString();
           propTitle = prop.title;
-        } else {
-          propId = MOCK_PROPERTY_ID;
-          propTitle = 'Aura Premium Heights';
         }
         lead.aiContext = lead.aiContext || {};
         lead.aiContext.proposedPropertyId = propId;
       } else {
-        if (propId === MOCK_PROPERTY_ID || propId === 'mock_property_id') {
-          propTitle = 'Aura Premium Heights';
-        } else if (mongoose.Types.ObjectId.isValid(propId)) {
+        if (mongoose.Types.ObjectId.isValid(propId)) {
           try {
             const prop = await Property.findById(propId);
             if (prop) propTitle = prop.title;
           } catch (_) { }
+        }
+      }
+
+      if (!propTitle) {
+        const properties = await searchProperties(lead.tenantId);
+        if (properties.length > 0) {
+          propTitle = properties[0].title;
+          lead.aiContext.proposedPropertyId = properties[0]._id.toString();
+        } else {
+          propTitle = 'the property';
         }
       }
 
@@ -613,7 +620,15 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
   }
 
   if (lead.status === 'Slot Pending') {
-    const propertyId = lead.aiContext?.proposedPropertyId || MOCK_PROPERTY_ID;
+    let propertyId = lead.aiContext?.proposedPropertyId;
+    if (!propertyId || !mongoose.Types.ObjectId.isValid(propertyId)) {
+      const properties = await searchProperties(lead.tenantId);
+      if (properties.length > 0) {
+        propertyId = properties[0]._id.toString();
+        lead.aiContext = lead.aiContext || {};
+        lead.aiContext.proposedPropertyId = propertyId;
+      }
+    }
 
     // Step 1: If day is not selected, parse day name
     if (!lead.aiContext?.selectedVisitDay) {
@@ -834,7 +849,7 @@ export const processIncomingMessage = async (leadId: string, textMessage: string
 
     let limitMessage = 'Please contact to proceed.';
     if (contactPerson) {
-      limitMessage = `Please contact the concern person to get more fetails about this: ${contactPerson.name} (${contactPerson.role}) at ${contactPerson.phone}.`;
+      limitMessage = `Please contact the concerned person to get more details about this: ${contactPerson.name} (${contactPerson.role}) at ${contactPerson.phone}.`;
     }
 
     if (io) io.to('/crm').emit(streamEvent, { token: limitMessage });
@@ -862,7 +877,7 @@ export const processIncomingMessage = async (leadId: string, textMessage: string
 
   // Semantic FAQ Cache Check
   const proposedPropertyId = lead.aiContext?.proposedPropertyId;
-  if (proposedPropertyId && mongoose.Types.ObjectId.isValid(proposedPropertyId) && proposedPropertyId !== MOCK_PROPERTY_ID) {
+  if (proposedPropertyId && mongoose.Types.ObjectId.isValid(proposedPropertyId)) {
     const cacheResult = await checkFaqCache(textMessage, lead.tenantId.toString(), proposedPropertyId);
     if (cacheResult) {
       console.log(`[FAQ Cache Hit] Tenant: ${lead.tenantId}, Project: ${proposedPropertyId}, Category: ${cacheResult.category}, Score: ${cacheResult.score}`);
@@ -935,6 +950,32 @@ export const processIncomingMessage = async (leadId: string, textMessage: string
       }
 
       aiResponse = await runAgentConversation(lead, textMessage);
+
+      // Dynamic brochure dispatching for LLM path
+      const textLower = textMessage.toLowerCase();
+      const isBrochureRequested = ['brochure', 'floor plan', 'floorplan', 'pdf', 'layout', 'document'].some(w => textLower.includes(w)) || 
+                                  ['brochure', 'pdf', 'document', 'floor plan', 'floorplan', 'layout'].some(w => aiResponse.toLowerCase().includes(w));
+
+      if (isBrochureRequested && lead.aiContext?.proposedPropertyId) {
+        const prop = await Property.findById(lead.aiContext.proposedPropertyId);
+        if (prop) {
+          const brochure = await resolvePropertyBrochure(prop);
+          if (brochure) {
+            console.log(`[LLM Brochure Trigger] Sending brochure for ${prop.title} to lead ${lead._id}`);
+            const targetLeadId = lead._id.toString();
+            const targetLeadMobile = lead.mobile;
+            setTimeout(async () => {
+              await sendWhatsAppDocument(
+                targetLeadId,
+                targetLeadMobile,
+                brochure.url,
+                brochure.filename,
+                `Brochure for ${prop.title}`
+              );
+            }, 1000);
+          }
+        }
+      }
     } catch (err: any) {
       console.error('[AI Agent Fallback Triggered] Error in Agent Conversation:', err.message);
       // Fallback: rule engine handles both mutations AND text
