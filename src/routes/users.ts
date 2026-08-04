@@ -6,11 +6,10 @@ import { checkUserLimit } from '../middleware/planGuard';
 const router = Router();
 
 router.use(authenticateToken as any);
-router.use(requireRole(['Admin']) as any);
 
 router.get('/', getUsers as any);
-router.post('/', checkUserLimit as any, createUser as any);
-router.put('/:id', updateUser as any);
-router.delete('/:id', deleteUser as any);
+router.post('/', requireRole(['Admin', 'Sales Manager']) as any, checkUserLimit as any, createUser as any);
+router.put('/:id', requireRole(['Admin', 'Sales Manager']) as any, updateUser as any);
+router.delete('/:id', requireRole(['Admin']) as any, deleteUser as any);
 
 export default router;
