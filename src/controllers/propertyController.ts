@@ -158,6 +158,18 @@ export const uploadBrochure = async (req: TenantRequest, res: Response) => {
       return res.status(400).json({ message: 'Only PDF documents are supported for brochures.' });
     }
 
+    // Delete previous brochure file if it exists locally
+    if (property.s3Urls?.brochure && property.s3Urls.brochure.startsWith('/uploads/')) {
+      const oldPath = path.join(__dirname, '../..', property.s3Urls.brochure);
+      if (fs.existsSync(oldPath)) {
+        try {
+          fs.unlinkSync(oldPath);
+        } catch (err) {
+          console.error('Error removing old brochure file:', err);
+        }
+      }
+    }
+
     const docDir = path.join(__dirname, '../../uploads/documents', String(tenantId), String(id));
     if (!fs.existsSync(docDir)) {
       fs.mkdirSync(docDir, { recursive: true });
