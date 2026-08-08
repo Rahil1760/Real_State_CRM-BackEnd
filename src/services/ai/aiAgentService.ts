@@ -3,6 +3,7 @@ import Property from '../../models/Property';
 import Tenant from '../../models/Tenant';
 import { generateLLMResponse } from './llmProviderService';
 import { resolvePropertyBrochure } from '../whatsapp/whatsappService';
+import { buildLocationConstraintText, formatIndianCurrency } from './aiService';
 
 export const runAgentConversation = async (lead: ILead, textMessage: string): Promise<string> => {
   // Fetch tenant info for dynamic company and bot names
@@ -11,15 +12,7 @@ export const runAgentConversation = async (lead: ILead, textMessage: string): Pr
   const botName = tenant?.senderDisplayName || 'Kayra';
 
   // Build system instruction prompt with lead context
-  const allProperties = await Property.find({ tenantId: lead.tenantId });
-  const uniqueLocations = Array.from(new Set(allProperties.map(p => p.location).filter(Boolean)));
-  const locationsStr = uniqueLocations.join(', ') || 'None';
-
-  const locationConstraintText = `
-=== PROJECT LOCATION LIMITATION ===
-Active project locations for this tenant: [${locationsStr}]
-CRITICAL RULE: When proposing, recommending, or discussing project locations, you MUST only suggest or mention locations from the active list above. Do NOT suggest or guess other locations (such as College Road, Gangapur Road, etc.) if they are not in this list.
-`;
+  const locationConstraintText = await buildLocationConstraintText(lead.tenantId.toString());
 
   let proposedPropertyContext = '';
   let brochureInfo = '';
@@ -32,7 +25,7 @@ Proposed Property Details:
 - ID: ${prop._id}
 - Title: ${prop.title}
 - Location: ${prop.location}
-- Price: ₹${prop.price.toLocaleString()}
+- Price: ${formatIndianCurrency(prop.price)}
 `;
 
       const brochure = await resolvePropertyBrochure(prop);
@@ -119,15 +112,35 @@ If the lead asks to speak to a human, call a representative, or escalate, share 
     console.error('Failed to fetch team contacts for agent prompt:', err);
   }
 
+  const now = new Date();
+  const currentDateContext = now.toLocaleString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: true,
+  });
+
   const systemInstruction = `You are ${botName}, the intelligent and welcoming AI assistant for ${companyName}. 
-Your primary goal is to qualify leads by collecting their property preferences (budget, location, property type, and intent) and scheduling a site visit.
+Your primary task is to maintain a good relationship with the lead, qualify their property preferences (budget, location, property type, and intent), and convert them into scheduling a site visit.
+
+=== CURRENT DATE & TIME (CRITICAL FOR CALENDAR/SCHEDULING) ===
+- Current Time: ${currentDateContext}
+- Reference: Today is ${now.toLocaleString('en-US', { weekday: 'long' })}, ${now.toLocaleString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}.
+Ensure that dates you mention align with this calendar day (e.g., if today is Sunday the 26th, then tomorrow is Monday the 27th, not Saturday).
 
 Follow these strict rules for every response:
 1. CONVERSATIONAL & CONCISE: You are chatting on WhatsApp. Keep your responses to 1-3 short sentences. Never send large blocks of text.
 2. ONE QUESTION AT A TIME: Ask one question at a time. Do not overwhelm the user.
-3. NO HALLUCINATIONS: If property details, pricing, amenities, or document excerpts are provided in the context below, use them precisely. Never invent numbers, names, or locations.
-4. USE PROVIDED CONTEXT: All relevant property data and document excerpts will be injected into this prompt before you respond. If you see "PROJECT DOCUMENT EXCERPTS" or "PROPOSED PROPERTY" sections below, cite them directly.
-5. QUALIFY LEADS: If context is missing, collect missing details (budget, location, property type, intent) one question at a time before proceeding.
+3. ACCURATE INVENTORY & LOCATIONS (CRITICAL): Only discuss locations and projects explicitly listed in active inventory. Never mention unlisted locations. If there is only 1 project in a location, do NOT say "we have a few options" or "multiple options"—refer specifically to the single project available.
+4. ACCURATE CURRENCY CONVERSION (CRITICAL): Understand Indian currency units: 1 Lakh (Lac/Lacs) = ₹1,00,000 (0.01 Crore). 60 Lakhs (60 lacs) is ₹60 Lakhs (₹60,00,000 or 0.6 Crore), NOT 6 Crores. Never confuse Lakhs with Crores.
+5. NO HALLUCINATIONS: If property details, pricing, amenities, or document excerpts are provided in the context below, use them precisely. Never invent numbers, names, or locations.
+6. USE PROVIDED CONTEXT: All relevant property data and document excerpts will be injected into this prompt before you respond. If you see "PROJECT DOCUMENT EXCERPTS" or "PROPOSED PROPERTY" sections below, cite them directly.
+7. QUALIFY LEADS: If context is missing, collect missing details (budget, location, property type, intent) one question at a time before proceeding.
+8. TONE: Be professional, empathetic, and highly accommodating. Always prioritize maintaining a good relationship with the lead and converting them to a site visit.
+9. FLEXIBLE SCHEDULING (CRITICAL): When scheduling a site visit, you must accept whatever day/time the lead proposes (including Sunday, weekends, tomorrow, or specific times) without any pushback. Never say a day is challenging, unavailable, or request verification from the site team. Immediately confirm the schedule. Do not repeat menus or suggest alternatives unless the lead explicitly asks for a change.
 
 ${teamContactsContext}
 
@@ -140,7 +153,7 @@ ${brochureInfo}
 - Lead ID: ${lead._id}
 - Tenant ID: ${lead.tenantId}
 - Current Status: ${lead.status}
-- Budget: ${lead.budget ? '₹' + lead.budget.toLocaleString() : 'Not provided'}
+- Budget: ${lead.budget ? formatIndianCurrency(lead.budget) : 'Not provided'}
 - Preferred Location: ${lead.location || 'Not provided'}
 - Property Type: ${lead.propertyType}
 - Purpose: ${lead.purpose}

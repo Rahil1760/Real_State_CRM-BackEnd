@@ -12,18 +12,66 @@ import { checkFaqCache } from './semanticCache';
 import { analyzeFeedbackSentiment } from './llmProviderService';
 import User from '../../models/User';
 
+export function formatIndianCurrency(amount: number): string {
+  if (!amount || isNaN(amount)) return '₹0';
+  if (amount >= 10000000) {
+    const cr = (amount / 10000000).toFixed(2).replace(/\.00$/, '');
+    return `₹${cr} Crore${parseFloat(cr) > 1 ? 's' : ''} (₹${amount.toLocaleString('en-IN')})`;
+  }
+  if (amount >= 100000) {
+    const lakh = (amount / 100000).toFixed(2).replace(/\.00$/, '');
+    return `₹${lakh} Lakh${parseFloat(lakh) > 1 ? 's' : ''} (₹${amount.toLocaleString('en-IN')})`;
+  }
+  return `₹${amount.toLocaleString('en-IN')}`;
+}
+
+export const buildLocationConstraintText = async (tenantId: string): Promise<string> => {
+  const allProperties = await Property.find({ tenantId });
+  if (allProperties.length === 0) {
+    return `
+=== PROJECT LOCATION & INVENTORY TRUTH ===
+Active locations: None currently listed.
+CRITICAL RULE: We do not have active listings at the moment. Politely inform the lead that our sales team will contact them when new inventory opens.
+`;
+  }
+
+  const locationMap: Record<string, string[]> = {};
+  allProperties.forEach(p => {
+    const loc = p.location || 'Unknown Location';
+    if (!locationMap[loc]) locationMap[loc] = [];
+    locationMap[loc].push(p.title);
+  });
+
+  const locationSummary = Object.entries(locationMap)
+    .map(([loc, projects]) => `- Location "${loc}": ${projects.length} project(s) available [${projects.join(', ')}]`)
+    .join('\n');
+
+  return `
+=== PROJECT LOCATION & INVENTORY TRUTH (CRITICAL) ===
+Active project locations and inventory for this tenant:
+${locationSummary}
+
+STRICT INVENTORY RULES:
+1. ONLY discuss locations explicitly listed above. Never mention, guess, or suggest unlisted locations (such as College Road, Gangapur Road, etc.).
+2. ACCURATE INVENTORY COUNT: Do NOT say "we have a few options" or "multiple options" if there is only 1 project in that location. State the exact project name and count (e.g. if there is only 1 project in Khode Nagar, say "We have 1 project available in Khode Nagar: [Project Name]").
+3. NO HALLUCINATED PROJECTS: Never invent nonexistent projects, floor plans, or locations.
+`;
+};
+
 export const AURA_SYSTEM_PROMPT = `You are Kayra, the intelligent and welcoming AI assistant for RealtyCloudai real estate. 
 
-Your primary goal is to qualify leads by collecting their property preferences (budget, location, property type, and intent) and seamlessly scheduling a site visit. 
+Your primary task is to maintain a good relationship with the lead, qualify their property preferences (budget, location, property type, and intent), and convert them into scheduling a site visit. 
 
 Follow these strict rules for every response:
 
 1. CONVERSATIONAL & CONCISE: You are chatting on WhatsApp. Keep your responses to 1-3 short sentences. Never send large blocks of text. 
 2. ONE QUESTION AT A TIME: Never ask multiple questions in a single message. Never combine a "Yes/No" question with a multiple-choice menu. Wait for the user to answer the current question before moving forward.
-3. FLEXIBLE SCHEDULING (CRITICAL): When it is time to schedule a site visit, you may suggest 3 available time slots (e.g., "1. Tomorrow at 11 AM", "2. Saturday at 10 AM"). However, if the user ignores the numbered list and suggests their own time (e.g., "Sunday at 4 PM" or "Next week"), YOU MUST ACCEPT THEIR TIME. Do not repeat the menu. Acknowledge their requested time, confirm the booking, and politely conclude the conversation.
-4. NO HALLUCINATIONS: Do not invent properties, prices, or locations. If you need to search inventory, tell the user you are checking and simulate the next step. 
-5. TONE: Be professional, empathetic, and highly accommodating. 
-6. DO NOT REPEAT QUESTIONS: Do not repeat the same Yes/No question or qualification details request if the user has already answered. Move to the next step.
+3. FLEXIBLE SCHEDULING (CRITICAL): When scheduling a site visit, you must accept whatever day/time the lead proposes (including Sunday, weekends, tomorrow, or specific times) without any pushback. Never say a day is challenging, unavailable, or request verification from the site team. Immediately confirm the schedule. Do not repeat menus or suggest alternatives unless the lead explicitly asks for a change.
+4. ACCURATE INVENTORY & LOCATIONS (CRITICAL): Only discuss locations and projects explicitly listed in active inventory. Never mention unlisted locations. If there is only 1 project in a location, do NOT say "we have a few options" or "multiple options"—refer specifically to the single project available.
+5. ACCURATE CURRENCY CONVERSION (CRITICAL): Understand Indian currency units: 1 Lakh (Lac/Lacs) = ₹1,00,000 (0.01 Crore). 60 Lakhs (60 lacs) is ₹60 Lakhs (₹60,00,000 or 0.6 Crore), NOT 6 Crores. Never confuse Lakhs with Crores.
+6. NO HALLUCINATIONS: Do not invent properties, prices, or locations. If you need to search inventory, tell the user you are checking and simulate the next step. 
+7. TONE: Be professional, empathetic, and highly accommodating. Always prioritize maintaining a good relationship with the lead and converting them to a site visit.
+8. DO NOT REPEAT QUESTIONS: Do not repeat the same Yes/No question or qualification details request if the user has already answered. Move to the next step.
 
 Your end goal is to confirm a site visit time without frustrating the user. Adapt to their conversational flow.`;
 
@@ -113,29 +161,22 @@ If the lead asks to speak to a human, call a representative, or escalate, share 
     console.error('Failed to fetch team contacts for prompt:', err);
   }
 
-  const allProperties = await Property.find({ tenantId: lead.tenantId });
-  const uniqueLocations = Array.from(new Set(allProperties.map(p => p.location).filter(Boolean)));
-  const locationsStr = uniqueLocations.join(', ') || 'None';
-  console.log(locationsStr, 'location')
-
-  const locationConstraintText = `
-=== PROJECT LOCATION LIMITATION ===
-Active project locations for this tenant: [${locationsStr}]
-CRITICAL RULE: When proposing, recommending, or discussing project locations, you MUST only suggest or mention locations from the active list above. Do NOT suggest or guess other locations if they are not in this list.
-`;
+  const locationConstraintText = await buildLocationConstraintText(lead.tenantId.toString());
 
   const promptTemplate = `You are ${botName}, the intelligent and welcoming AI assistant for ${companyName} real estate. 
 
-Your primary goal is to qualify leads by collecting their property preferences (budget, location, property type, and intent) and seamlessly scheduling a site visit. 
+Your primary task is to maintain a good relationship with the lead, qualify their property preferences (budget, location, property type, and intent), and convert them into scheduling a site visit. 
 
 Follow these strict rules for every response:
 
 1. CONVERSATIONAL & CONCISE: You are chatting on WhatsApp. Keep your responses to 1-3 short sentences. Never send large blocks of text. 
 2. ONE QUESTION AT A TIME: Never ask multiple questions in a single message. Never combine a "Yes/No" question with a multiple-choice menu. Wait for the user to answer the current question before moving forward.
-3. FLEXIBLE SCHEDULING (CRITICAL): When it is time to schedule a site visit, you may suggest 3 available time slots (e.g., "1. Tomorrow at 11 AM", "2. Saturday at 10 AM"). However, if the user ignores the numbered list and suggests their own time (e.g., "Sunday at 4 PM" or "Next week"), YOU MUST ACCEPT THEIR TIME. Do not repeat the menu. Acknowledge their requested time, confirm the booking, and politely conclude the conversation.
-4. NO HALLUCINATIONS: Do not invent properties, prices, or locations. If you need to search inventory, tell the user you are checking and simulate the next step. 
-5. TONE: Be professional, empathetic, and highly accommodating. 
-6. DO NOT REPEAT QUESTIONS: Do not repeat the same Yes/No question or qualification details request if the user has already answered. Move to the next step.
+3. FLEXIBLE SCHEDULING (CRITICAL): When scheduling a site visit, you must accept whatever day/time the lead proposes (including Sunday, weekends, tomorrow, or specific times) without any pushback. Never say a day is challenging, unavailable, or request verification from the site team. Immediately confirm the schedule. Do not repeat menus or suggest alternatives unless the lead explicitly asks for a change.
+4. ACCURATE INVENTORY & LOCATIONS (CRITICAL): Only discuss locations and projects explicitly listed in active inventory. Never mention unlisted locations. If there is only 1 project in a location, do NOT say "we have a few options" or "multiple options"—refer specifically to the single project available.
+5. ACCURATE CURRENCY CONVERSION (CRITICAL): Understand Indian currency units: 1 Lakh (Lac/Lacs) = ₹1,00,000 (0.01 Crore). 60 Lakhs (60 lacs) is ₹60 Lakhs (₹60,00,000 or 0.6 Crore), NOT 6 Crores. Never confuse Lakhs with Crores.
+6. NO HALLUCINATIONS: Do not invent properties, prices, or locations. If you need to search inventory, tell the user you are checking and simulate the next step. 
+7. TONE: Be professional, empathetic, and highly accommodating. Always prioritize maintaining a good relationship with the lead and converting them to a site visit.
+8. DO NOT REPEAT QUESTIONS: Do not repeat the same Yes/No question or qualification details request if the user has already answered. Move to the next step.
 
 Your end goal is to confirm a site visit time without frustrating the user. Adapt to their conversational flow.`;
 
@@ -153,10 +194,10 @@ Your end goal is to confirm a site visit time without frustrating the user. Adap
         const prop = await Property.findById(propId);
         if (prop) {
           propertyContext = `
-Proposed Property Details (already presented to the lead â€” do NOT re-introduce it):
+Proposed Property Details (already presented to the lead — do NOT re-introduce it):
 - Title: ${prop.title}
 - Location: ${prop.location}
-- Price: â‚¹${prop.price.toLocaleString()}
+- Price: ${formatIndianCurrency(prop.price)}
 - Amenities: ${prop.amenities.join(', ')}
 - Description: ${prop.description || 'N/A'}
 `;
@@ -174,7 +215,7 @@ Proposed Property Details (already presented to the lead â€” do NOT re-intr
   if (!lead.purpose || lead.purpose === 'Any') missingFields.push('purpose (buy/invest)');
 
   const collectedFields = [
-    lead.budget ? `budget = â‚¹${lead.budget.toLocaleString()}` : null,
+    lead.budget ? `budget = ${formatIndianCurrency(lead.budget)}` : null,
     lead.location ? `location = ${lead.location}` : null,
     lead.propertyType !== 'Any' ? `property type = ${lead.propertyType}` : null,
     lead.purpose !== 'Any' ? `purpose = ${lead.purpose}` : null,
@@ -185,7 +226,23 @@ Proposed Property Details (already presented to the lead â€” do NOT re-intr
     .map((msg: any) => `${msg.role === 'user' ? 'User' : 'Aura'}: ${msg.text}`)
     .join('\n');
 
+  const now = new Date();
+  const currentDateContext = now.toLocaleString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: true,
+  });
+
   return `${promptTemplate}
+
+=== CURRENT DATE & TIME (CRITICAL FOR CALENDAR/SCHEDULING) ===
+- Current Time: ${currentDateContext}
+- Reference: Today is ${now.toLocaleString('en-US', { weekday: 'long' })}, ${now.toLocaleString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}.
+Ensure that dates you mention align with this calendar day (e.g., if today is Sunday the 26th, then tomorrow is Monday the 27th, not Saturday).
 
 ${teamContactsContext}
 
@@ -194,13 +251,13 @@ ${locationConstraintText}
 === CURRENT LEAD STATE ===
 - Name: ${lead.name}
 - CRM Status: ${lead.status}
-- Budget: ${lead.budget ? 'â‚¹' + lead.budget.toLocaleString() : 'Not provided'}
+- Budget: ${lead.budget ? formatIndianCurrency(lead.budget) : 'Not provided'}
 - Preferred Location: ${lead.location || 'Not provided'}
 - Property Type: ${lead.propertyType}
 - Purpose: ${lead.purpose}
 ${propertyContext}
 
-=== ALREADY COLLECTED (CRITICAL â€” DO NOT ASK AGAIN) ===
+=== ALREADY COLLECTED (CRITICAL — DO NOT ASK AGAIN) ===
 ${collectedFields || 'Nothing collected yet.'}
 
 === STILL MISSING (ask ONE at a time in order) ===
@@ -414,6 +471,15 @@ function extractDay(text: string): string | null {
       return d.charAt(0).toUpperCase() + d.slice(1);
     }
   }
+  if (lower.includes('tomorrow')) {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return tomorrow.toLocaleString('en-US', { weekday: 'long' });
+  }
+  if (lower.includes('today')) {
+    const today = new Date();
+    return today.toLocaleString('en-US', { weekday: 'long' });
+  }
   return null;
 }
 
@@ -421,7 +487,20 @@ function extractPeriod(text: string): 'Morning' | 'Afternoon' | 'Evening' | null
   const lower = text.toLowerCase();
   if (lower.includes('morning')) return 'Morning';
   if (lower.includes('afternoon')) return 'Afternoon';
-  if (lower.includes('evening')) return 'Evening';
+  if (lower.includes('evening') || lower.includes('night')) return 'Evening';
+
+  // Try to find a time pattern like "2 pm", "11:00 am", "3 pm", etc.
+  const timeMatch = lower.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
+  if (timeMatch) {
+    let hour = parseInt(timeMatch[1], 10);
+    const meridiem = timeMatch[3];
+    if (meridiem === 'pm' && hour < 12) hour += 12;
+    if (meridiem === 'am' && hour === 12) hour = 0;
+    
+    if (hour >= 6 && hour < 12) return 'Morning';
+    if (hour >= 12 && hour < 17) return 'Afternoon';
+    if (hour >= 17 && hour < 22) return 'Evening';
+  }
   return null;
 }
 
@@ -458,13 +537,17 @@ function getScheduledDateForDayAndPeriod(dayName: string, period: 'Morning' | 'A
 // --- Extractors ---
 export const extractBudgetValue = (text: string): number => {
   const textLower = text.toLowerCase();
-  const budgetMatch = textLower.match(/(\d+(?:\.\d+)?)\s*(lakh|l|cr|crore|thousand|k)/);
+  const budgetMatch = textLower.match(/(\d+(?:\.\d+)?)\s*(lakhs?|lacs?|l|crores?|crs?|cr|thousand|k)/i);
   if (budgetMatch) {
     let amt = parseFloat(budgetMatch[1]);
-    const unit = budgetMatch[2];
-    if (unit.includes('cr') || unit.includes('crore')) amt *= 10000000;
-    else if (unit.startsWith('l')) amt *= 100000;
-    else if (unit.startsWith('k') || unit.includes('thousand')) amt *= 1000;
+    const unit = budgetMatch[2].toLowerCase();
+    if (unit.includes('cr')) {
+      amt *= 10000000;
+    } else if (unit.startsWith('l') || unit.includes('lac') || unit.includes('lakh')) {
+      amt *= 100000;
+    } else if (unit.startsWith('k') || unit.includes('thousand')) {
+      amt *= 1000;
+    }
     return amt;
   }
   return 0;
@@ -545,7 +628,7 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
         }, 1000);
       }
 
-      return `Great news! I found a match: *${prop.title}* at ${prop.location} for \u20b9${prop.price.toLocaleString()}.\nAmenities: ${prop.amenities.join(', ')}.\n\nIf you'd like to visit this property, please share a suitable date and time. I'll help schedule a site visit according to your convenience.`;
+      return `Great news! I found a match: *${prop.title}* at ${prop.location} for ${formatIndianCurrency(prop.price)}.\nAmenities: ${prop.amenities.join(', ')}.\n\nIf you'd like to visit this property, please share a suitable date and time. I'll help schedule a site visit according to your convenience.`;
     }
     return `Currently, we do not have active listings matching your profile, but let me check with our team to find the best options.`;
   }
@@ -553,8 +636,10 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
   if (lead.status === 'Qualified') {
     const isYes = ['yes', 'interested', 'sure', 'ok', 'okay', 'haan', 'yep', 'yup'].some((w) => textLower.includes(w));
     const isNo = ['no', 'not interested', 'nope', 'nahi'].some((w) => textLower.includes(w));
+    const isDayMentioned = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'tomorrow', 'today'].some((w) => textLower.includes(w));
+    const isTimeMentioned = ['morning', 'afternoon', 'evening', 'am', 'pm'].some((w) => textLower.includes(w)) || /\d{1,2}\s*(am|pm)/i.test(textMessage);
 
-    if (isYes) {
+    if (isYes || isDayMentioned || isTimeMentioned) {
       let propId = lead.aiContext?.proposedPropertyId;
       let propTitle = '';
 
@@ -596,6 +681,38 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
         actor: 'AI',
         details: `Lead expressed interest. Requesting visit day choice for property ${propId}`,
       });
+
+      // Attempt to immediately extract day and period from this message
+      const matchedDay = extractDay(textMessage);
+      if (matchedDay) {
+        lead.aiContext.selectedVisitDay = matchedDay;
+        lead.timeline.push({
+          event: 'Site Visit Day Selected',
+          timestamp: new Date(),
+          actor: 'AI',
+          details: `Selected visit day: ${matchedDay}`,
+        });
+
+        const matchedPeriod = extractPeriod(textMessage);
+        if (matchedPeriod) {
+          lead.aiContext.selectedVisitPeriod = matchedPeriod;
+          lead.timeline.push({
+            event: 'Site Visit Period Selected',
+            timestamp: new Date(),
+            actor: 'AI',
+            details: `Selected period: ${matchedPeriod}`,
+          });
+
+          const targetDate = getScheduledDateForDayAndPeriod(matchedDay, matchedPeriod);
+          const result = await scheduleVisit(lead._id.toString(), propId, targetDate.toISOString());
+          if (result.success) {
+            lead.status = 'Visit Scheduled';
+            return `Your site visit is confirmed for ${matchedDay} (${matchedPeriod}) on ${targetDate.toLocaleString()}. We look forward to meeting you! 🏠`;
+          }
+        }
+
+        return `Perfect, ${matchedDay} is noted. What time of day works best for you? Please reply with *Morning*, *Afternoon*, or *Evening*.`;
+      }
 
       return `Great! Which day of the week (Monday to Sunday) would you prefer for the site visit to *${propTitle}*?`;
     }
@@ -646,6 +763,25 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
         details: `Selected visit day: ${matchedDay}`,
       });
 
+      // Check if period is also in the same message
+      const matchedPeriod = extractPeriod(textMessage);
+      if (matchedPeriod) {
+        lead.aiContext.selectedVisitPeriod = matchedPeriod;
+        lead.timeline.push({
+          event: 'Site Visit Period Selected',
+          timestamp: new Date(),
+          actor: 'AI',
+          details: `Selected period: ${matchedPeriod}`,
+        });
+
+        const targetDate = getScheduledDateForDayAndPeriod(matchedDay, matchedPeriod);
+        const result = await scheduleVisit(lead._id.toString(), propertyId, targetDate.toISOString());
+        if (result.success) {
+          lead.status = 'Visit Scheduled';
+          return `Your site visit is confirmed for ${matchedDay} (${matchedPeriod}) on ${targetDate.toLocaleString()}. We look forward to meeting you! 🏠`;
+        }
+      }
+
       return `Perfect, ${matchedDay} is noted. What time of day works best for you? Please reply with *Morning*, *Afternoon*, or *Evening*.`;
     }
 
@@ -668,7 +804,7 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
     const result = await scheduleVisit(lead._id.toString(), propertyId, targetDate.toISOString());
     if (result.success) {
       lead.status = 'Visit Scheduled';
-      return `Your site visit is confirmed for ${lead.aiContext.selectedVisitDay} (${matchedPeriod}) on ${targetDate.toLocaleString()}. We look forward to meeting you! ðŸ¡`;
+      return `Your site visit is confirmed for ${lead.aiContext.selectedVisitDay} (${matchedPeriod}) on ${targetDate.toLocaleString()}. We look forward to meeting you! 🏠`;
     }
     if (result.message === 'Slot already booked. Choose another time slot.') {
       lead.aiContext.selectedVisitPeriod = '';
@@ -707,6 +843,38 @@ const polishWithAI = async (lead: ILead, baseResponse: string): Promise<string> 
   const openaiApiKey = process.env.OPENAI_API_KEY;
 
   const rewritePrompt = `Rewrite the following message naturally for WhatsApp. Keep it under 2 sentences. Do NOT include any introductory text, prefix, or explanation. Return only the rewritten message.\n\n"${baseResponse}"`;
+
+  // Try Ollama first
+  if (process.env.LLM_PROVIDER === 'ollama') {
+    try {
+      const ollamaUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+      const modelName = process.env.LLM_MODEL || 'llama3.1:8b';
+      const systemInstruction = await system_Prompt(lead);
+
+      const OpenAI = require('openai');
+      const ollama = new OpenAI({ apiKey: 'ollama', baseURL: `${ollamaUrl}/v1` });
+
+      const messages = [
+        { role: 'system', content: systemInstruction },
+        ...(lead.chatHistory || []).slice(-20).map((msg: any) => ({
+          role: msg.role === 'user' ? 'user' : 'assistant',
+          content: msg.text,
+        })),
+        { role: 'user', content: rewritePrompt },
+      ];
+
+      const response = await ollama.chat.completions.create({
+        model: modelName,
+        messages,
+        temperature: 0.7,
+      });
+
+      const polished = (response.choices[0].message.content || '').trim();
+      if (polished) return polished;
+    } catch (err: any) {
+      console.error('Ollama polish failed, using rule-engine response:', err.message);
+    }
+  }
 
   // Try Gemini first
   if (geminiApiKey && !geminiApiKey.startsWith('mock')) {
@@ -871,9 +1039,11 @@ export const processIncomingMessage = async (leadId: string, textMessage: string
 
   let aiResponse = '';
   const provider = process.env.LLM_PROVIDER || 'gemini';
-  const hasProviderKey = provider === 'groq'
-    ? (process.env.GROQ_API_KEY && !process.env.GROQ_API_KEY.startsWith('mock'))
-    : (process.env.GEMINI_API_KEY && !process.env.GEMINI_API_KEY.startsWith('mock'));
+  const hasProviderKey = provider === 'ollama'
+    ? true
+    : provider === 'groq'
+      ? (process.env.GROQ_API_KEY && !process.env.GROQ_API_KEY.startsWith('mock'))
+      : (process.env.GEMINI_API_KEY && !process.env.GEMINI_API_KEY.startsWith('mock'));
 
   // Semantic FAQ Cache Check
   const proposedPropertyId = lead.aiContext?.proposedPropertyId;
@@ -891,6 +1061,7 @@ export const processIncomingMessage = async (leadId: string, textMessage: string
         const leadForMutations = await Lead.findById(leadId);
         if (leadForMutations) {
           await determineBaseResponse(leadForMutations, textMessage);
+          await leadForMutations.save();
           const mutatedLead = await Lead.findById(leadId);
           if (mutatedLead) lead = mutatedLead;
         }
@@ -941,6 +1112,7 @@ export const processIncomingMessage = async (leadId: string, textMessage: string
       if (leadForMutations) {
         try {
           await determineBaseResponse(leadForMutations, textMessage);
+          await leadForMutations.save();
           // Re-fetch lead so subsequent code sees the updated state from mutations
           const mutatedLead = await Lead.findById(leadId);
           if (mutatedLead) lead = mutatedLead;

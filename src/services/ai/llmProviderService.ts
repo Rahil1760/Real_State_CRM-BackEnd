@@ -186,6 +186,57 @@ async function callGemini(
 }
 
 // ─────────────────────────────────────────────────────────────
+//  Single-call LLM Invocation via Ollama (OpenAI-compatible)
+// ─────────────────────────────────────────────────────────────
+
+async function callOllama(
+  systemInstruction: string,
+  history: any[],
+  textMessage: string
+): Promise<string> {
+  const ollamaUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+  const modelName = process.env.LLM_MODEL || 'llama3.1:8b';
+
+  const OpenAI = require('openai');
+  const ollama = new OpenAI({ apiKey: 'ollama', baseURL: `${ollamaUrl}/v1` });
+
+  const messages: any[] = [
+    { role: 'system', content: systemInstruction },
+    ...history.slice(-20).map((msg: any) => ({
+      role: msg.role === 'user' ? 'user' : 'assistant',
+      content: msg.text,
+    })),
+    { role: 'user', content: textMessage || 'Analyze' },
+  ];
+
+  let retries = 3;
+  while (retries > 0) {
+    try {
+      const startTime = Date.now();
+      const response = await ollama.chat.completions.create({
+        model: modelName,
+        messages,
+        temperature: 0.5,
+      });
+
+      const ms = Date.now() - startTime;
+      const usage = response.usage;
+      console.log(
+        `[LLM API Call] Provider: ollama | Model: ${modelName} | Time: ${ms}ms | Tokens: ${usage?.total_tokens ?? 0} (In: ${usage?.prompt_tokens ?? 0}, Out: ${usage?.completion_tokens ?? 0})`
+      );
+
+      return (response.choices[0].message.content || '').trim();
+    } catch (err: any) {
+      retries--;
+      console.error(`[Ollama API Error] Retries left: ${retries}.`, err.message);
+      if (retries === 0) throw err;
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+  return '';
+}
+
+// ─────────────────────────────────────────────────────────────
 //  Public Interface — always exactly 1 API call
 // ─────────────────────────────────────────────────────────────
 
@@ -206,6 +257,8 @@ export const generateLLMResponse = async (
   const provider = process.env.LLM_PROVIDER || 'gemini';
   if (provider === 'groq') {
     return await callGroq(enrichedInstruction, history, textMessage);
+  } else if (provider === 'ollama') {
+    return await callOllama(enrichedInstruction, history, textMessage);
   } else {
     return await callGemini(enrichedInstruction, history, textMessage);
   }
@@ -228,6 +281,8 @@ Only output one of these three words: Hot, Warm, Cold. Do not write a sentence, 
 
     if (provider === 'groq') {
       rawResponse = await callGroq(prompt, [], '');
+    } else if (provider === 'ollama') {
+      rawResponse = await callOllama(prompt, [], '');
     } else {
       rawResponse = await callGemini(prompt, [], '');
     }

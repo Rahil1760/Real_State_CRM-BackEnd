@@ -55,11 +55,17 @@ async function runSeeder() {
         `${faq.question}\n${faq.answer}`
       );
 
+      // Pad to 1536 dimensions to match Upstash Vector configuration
+      const paddedEmbedding = new Array(1536).fill(0);
+      for (let j = 0; j < embedding.length; j++) {
+        paddedEmbedding[j] = embedding[j];
+      }
+
       const id = `${tenantId}-${projectId}-${count}`;
 
       await faqVectorIndex.upsert({
         id: id,
-        vector: embedding,
+        vector: paddedEmbedding,
         metadata: {
           tenantId,
           projectId,
