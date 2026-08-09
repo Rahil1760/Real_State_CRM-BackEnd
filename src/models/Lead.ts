@@ -47,6 +47,7 @@ export interface ILead extends Document {
     selectedVisitPeriod?: string;
     welcomeSent?: boolean;
     welcomeSentAt?: Date;
+    firstBrochureSent?: boolean;
   };
   chatHistory: IChatMessage[];
   createdAt: Date;
@@ -117,6 +118,7 @@ const LeadSchema: Schema = new Schema(
       selectedVisitPeriod: { type: String, default: '' },
       welcomeSent: { type: Boolean, default: false },
       welcomeSentAt: { type: Date },
+      firstBrochureSent: { type: Boolean, default: false },
     },
     chatHistory: [
       {

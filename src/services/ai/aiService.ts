@@ -615,19 +615,6 @@ export const determineBaseResponse = async (lead: any, textMessage: string): Pro
       lead.aiContext = lead.aiContext || {};
       lead.aiContext.proposedPropertyId = prop._id.toString();
 
-      const brochure = await resolvePropertyBrochure(prop);
-      if (brochure) {
-        setTimeout(async () => {
-          await sendWhatsAppDocument(
-            lead._id.toString(),
-            lead.mobile,
-            brochure.url,
-            brochure.filename,
-            `Brochure for ${prop.title}`
-          );
-        }, 1000);
-      }
-
       return `Great news! I found a match: *${prop.title}* at ${prop.location} for ${formatIndianCurrency(prop.price)}.\nAmenities: ${prop.amenities.join(', ')}.\n\nIf you'd like to visit this property, please share a suitable date and time. I'll help schedule a site visit according to your convenience.`;
     }
     return `Currently, we do not have active listings matching your profile, but let me check with our team to find the best options.`;
@@ -1122,32 +1109,6 @@ export const processIncomingMessage = async (leadId: string, textMessage: string
       }
 
       aiResponse = await runAgentConversation(lead, textMessage);
-
-      // Dynamic brochure dispatching for LLM path
-      const textLower = textMessage.toLowerCase();
-      const isBrochureRequested = ['brochure', 'floor plan', 'floorplan', 'pdf', 'layout', 'document'].some(w => textLower.includes(w)) || 
-                                  ['brochure', 'pdf', 'document', 'floor plan', 'floorplan', 'layout'].some(w => aiResponse.toLowerCase().includes(w));
-
-      if (isBrochureRequested && lead.aiContext?.proposedPropertyId) {
-        const prop = await Property.findById(lead.aiContext.proposedPropertyId);
-        if (prop) {
-          const brochure = await resolvePropertyBrochure(prop);
-          if (brochure) {
-            console.log(`[LLM Brochure Trigger] Sending brochure for ${prop.title} to lead ${lead._id}`);
-            const targetLeadId = lead._id.toString();
-            const targetLeadMobile = lead.mobile;
-            setTimeout(async () => {
-              await sendWhatsAppDocument(
-                targetLeadId,
-                targetLeadMobile,
-                brochure.url,
-                brochure.filename,
-                `Brochure for ${prop.title}`
-              );
-            }, 1000);
-          }
-        }
-      }
     } catch (err: any) {
       console.error('[AI Agent Fallback Triggered] Error in Agent Conversation:', err.message);
       // Fallback: rule engine handles both mutations AND text
@@ -1157,6 +1118,71 @@ export const processIncomingMessage = async (leadId: string, textMessage: string
     // Rule engine path: mutations and text generation happen together
     const baseResponse = await determineBaseResponse(lead, textMessage);
     aiResponse = await polishWithAI(lead, baseResponse);
+  }
+
+  // Controlled Brochure Dispatching:
+  // 1. Send brochure with the FIRST message exchange (if not already sent).
+  // 2. Send brochure when client explicitly requests it in their incoming message.
+  const textLower = textMessage.toLowerCase();
+  const isClientRequestingBrochure = [
+    'brochure', 'floor plan', 'floorplan', 'pdf', 'layout',
+    'catalog', 'catalogue', 'prospectus', 'details pdf', 'project details'
+  ].some(w => textLower.includes(w)) ||
+  (textLower.includes('send') && (textLower.includes('details') || textLower.includes('file') || textLower.includes('info') || textLower.includes('pdf'))) ||
+  (textLower.includes('share') && (textLower.includes('details') || textLower.includes('file') || textLower.includes('info') || textLower.includes('pdf')));
+
+  const isFirstBrochure = !lead.aiContext?.firstBrochureSent;
+
+  if (isFirstBrochure || isClientRequestingBrochure) {
+    let targetPropId = lead.aiContext?.proposedPropertyId;
+    let targetProp: any = null;
+
+    if (targetPropId) {
+      targetProp = await Property.findById(targetPropId);
+    }
+
+    if (!targetProp) {
+      const properties = await searchProperties(lead.tenantId.toString());
+      if (properties.length > 0) {
+        targetProp = properties[0];
+        targetPropId = targetProp._id.toString();
+        lead.aiContext = lead.aiContext || {};
+        lead.aiContext.proposedPropertyId = targetPropId;
+      }
+    }
+
+    if (targetProp) {
+      const brochure = await resolvePropertyBrochure(targetProp);
+      if (brochure) {
+        console.log(`[Brochure Dispatcher] (${isFirstBrochure ? 'First Message' : 'Client Requested'}) Sending brochure for "${targetProp.title}" to lead ${lead._id}`);
+
+        const targetLeadId = lead._id.toString();
+        const targetLeadMobile = lead.mobile;
+
+        setTimeout(async () => {
+          try {
+            await sendWhatsAppDocument(
+              targetLeadId,
+              targetLeadMobile,
+              brochure.url,
+              brochure.filename,
+              `Brochure for ${targetProp.title}`
+            );
+          } catch (docErr: any) {
+            console.error('[Brochure Send Error]:', docErr.message);
+          }
+        }, 1000);
+
+        lead.aiContext = lead.aiContext || {};
+        lead.aiContext.firstBrochureSent = true;
+        lead.aiContext.proposedPropertyId = targetPropId;
+
+        await Lead.findByIdAndUpdate(leadId, {
+          'aiContext.firstBrochureSent': true,
+          'aiContext.proposedPropertyId': targetPropId
+        });
+      }
+    }
   }
 
   // Re-fetch lead one final time to ensure we persist the latest state
