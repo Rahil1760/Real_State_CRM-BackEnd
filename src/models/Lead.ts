@@ -47,8 +47,11 @@ export interface ILead extends Document {
     selectedVisitPeriod?: string;
     welcomeSent?: boolean;
     welcomeSentAt?: Date;
+    locationAskCount?: number;
   };
   chatHistory: IChatMessage[];
+  aiPaused?: boolean;
+  escalationReason?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -117,6 +120,7 @@ const LeadSchema: Schema = new Schema(
       selectedVisitPeriod: { type: String, default: '' },
       welcomeSent: { type: Boolean, default: false },
       welcomeSentAt: { type: Date },
+      locationAskCount: { type: Number, default: 0 },
     },
     chatHistory: [
       {
@@ -124,6 +128,8 @@ const LeadSchema: Schema = new Schema(
         text: { type: String, required: true },
       }
     ],
+    aiPaused: { type: Boolean, default: false },
+    escalationReason: { type: String, default: '' },
   },
   { timestamps: true }
 );

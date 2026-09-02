@@ -1,137 +1,199 @@
 import Lead, { ILead } from '../../models/Lead';
 import Property from '../../models/Property';
-import { generateLLMResponse } from './llmProviderService';
+import Tenant from '../../models/Tenant';
+import User from '../../models/User';
+import { generateLLMResponse, generateStructuredLLMResponse, AgentResponsePayload } from './llmProviderService';
+import { resolvePropertyBrochure } from '../whatsapp/whatsappService';
 
-export const runAgentConversation = async (lead: ILead, textMessage: string): Promise<string> => {
-  // Build system instruction prompt with lead context
-  const allProperties = await Property.find({ tenantId: lead.tenantId });
+// ─────────────────────────────────────────────────────────────
+//  Build a rich, fully-contextual system prompt from live DB data.
+//  Nothing is hardcoded — company name, bot name, properties,
+//  lead state, conversation history, and brochure availability
+//  all come from the database.
+// ─────────────────────────────────────────────────────────────
+
+async function buildSystemPrompt(lead: ILead): Promise<string> {
+  const tenantId = lead.tenantId.toString();
+
+  // ── Tenant / company context ─────────────────────────────────
+  const tenant = await Tenant.findById(tenantId);
+  const companyName = tenant?.senderDisplayName || tenant?.name || 'our real estate company';
+
+  // ── Available properties & locations ─────────────────────────
+  const allProperties = await Property.find({ tenantId });
   const uniqueLocations = Array.from(new Set(allProperties.map(p => p.location).filter(Boolean)));
-  const locationsStr = uniqueLocations.join(', ') || 'None';
+  const locationsStr = uniqueLocations.join(', ') || 'various locations';
 
-  const locationConstraintText = `
-=== PROJECT LOCATION LIMITATION ===
-Active project locations for this tenant: [${locationsStr}]
-CRITICAL RULE: When proposing, recommending, or discussing project locations, you MUST only suggest or mention locations from the active list above. Do NOT suggest or guess other locations (such as College Road, Gangapur Road, etc.) if they are not in this list.
-`;
-
-  let proposedPropertyContext = '';
-
-  if (lead.aiContext?.proposedPropertyId) {
+  // ── Proposed property details + brochure availability ────────
+  let proposedPropertySection = '';
+  if (lead.aiContext?.proposedPropertyId && lead.aiContext.proposedPropertyId !== 'mock_property_id') {
     const prop = await Property.findById(lead.aiContext.proposedPropertyId);
     if (prop) {
-      proposedPropertyContext = `
-Proposed Property Details:
-- ID: ${prop._id}
+      const brochure = await resolvePropertyBrochure(prop).catch(() => null);
+      proposedPropertySection = `
+=== PROPOSED PROPERTY (already shared with lead — do NOT re-introduce) ===
 - Title: ${prop.title}
 - Location: ${prop.location}
-- Price: â‚¹${prop.price.toLocaleString()}
+- Price: ₹${prop.price.toLocaleString()}
+- Type: ${prop.type}
+- Amenities: ${prop.amenities.join(', ') || 'N/A'}
+- Description: ${prop.description || 'N/A'}
+- Brochure: ${brochure ? 'ALREADY SENT as a PDF file' : 'Not available'}
 `;
     }
   }
 
-  let teamContactsContext = '';
+  // ── All available inventory (brief list for matching) ────────
+  const inventoryList = allProperties.length > 0
+    ? allProperties.map(p =>
+        `  • ${p.title} | ${p.type} | ${p.location} | ₹${p.price.toLocaleString()}`
+      ).join('\n')
+    : '  (No properties in inventory yet)';
+
+  // ── Contact escalation person ────────────────────────────────
+  let contactSection = '';
   try {
-    const User = require('../../models/User').default;
-    const Tenant = require('../../models/Tenant').default;
-    
     let contactPerson: { name: string; role: string; phone: string } | null = null;
-    
-    // 1. Share mobile numbers to assigned sales executive or sales manager
+
     if (lead.assignedTo) {
-      const assignedUser = await User.findById(lead.assignedTo);
-      if (assignedUser && assignedUser.phone && ['Sales Executive', 'Sales Manager'].includes(assignedUser.role)) {
-        contactPerson = {
-          name: assignedUser.name,
-          role: assignedUser.role,
-          phone: assignedUser.phone
-        };
+      const u = await User.findById(lead.assignedTo);
+      if (u?.phone && ['Sales Executive', 'Sales Manager'].includes(u.role)) {
+        contactPerson = { name: u.name, role: u.role, phone: u.phone };
       }
     }
-    
-    // 2. If no assigned user with a phone number, look for any Sales Executive under this tenant
     if (!contactPerson) {
-      const exec = await User.findOne({
-        tenantId: lead.tenantId,
-        role: 'Sales Executive',
-        phone: { $ne: '' }
-      });
-      if (exec) {
-        contactPerson = {
-          name: exec.name,
-          role: 'Sales Executive',
-          phone: exec.phone!
-        };
-      }
+      const exec = await User.findOne({ tenantId, role: 'Sales Executive', phone: { $ne: '' } });
+      if (exec) contactPerson = { name: exec.name, role: 'Sales Executive', phone: exec.phone! };
     }
-    
-    // 3. If no Sales Executive, look for any Sales Manager under this tenant
     if (!contactPerson) {
-      const manager = await User.findOne({
-        tenantId: lead.tenantId,
-        role: 'Sales Manager',
-        phone: { $ne: '' }
-      });
-      if (manager) {
-        contactPerson = {
-          name: manager.name,
-          role: 'Sales Manager',
-          phone: manager.phone!
-        };
-      }
+      const mgr = await User.findOne({ tenantId, role: 'Sales Manager', phone: { $ne: '' } });
+      if (mgr) contactPerson = { name: mgr.name, role: 'Sales Manager', phone: mgr.phone! };
     }
-    
-    // 4. If no Sales Executive or Sales Manager, share the Tenant Admin's number
-    if (!contactPerson) {
-      const tenant = await Tenant.findById(lead.tenantId);
-      if (tenant && tenant.phone) {
-        contactPerson = {
-          name: tenant.name,
-          role: 'Admin',
-          phone: tenant.phone
-        };
-      }
+    if (!contactPerson && tenant?.phone) {
+      contactPerson = { name: companyName, role: 'Admin', phone: tenant.phone };
     }
-    
+
     if (contactPerson) {
-      teamContactsContext = `
-=== CONCERNED REPRESENTATIVE CONTACT ===
-If the lead asks to speak to a human, call a representative, or escalate, share the following details so they can connect with the concerned person:
+      contactSection = `
+=== HUMAN ESCALATION ===
+If the lead asks to speak to a person, share:
 - Name: ${contactPerson.name}
 - Role: ${contactPerson.role}
-- Phone Number: ${contactPerson.phone}
+- Phone: ${contactPerson.phone}
 `;
     }
-  } catch (err) {
-    console.error('Failed to fetch team contacts for agent prompt:', err);
+  } catch (_) {}
+
+  // ── Qualification fields collected vs missing ────────────────
+  const collected: string[] = [];
+  const missing: string[] = [];
+
+  if (lead.budget && lead.budget > 0) collected.push(`Budget = ₹${lead.budget.toLocaleString()}`);
+  else missing.push('budget');
+
+  if (lead.location?.trim()) collected.push(`Location = ${lead.location}`);
+  else missing.push('preferred location');
+
+  if (lead.propertyType && lead.propertyType !== 'Any') collected.push(`Property type = ${lead.propertyType}`);
+  else missing.push('property type (Apartment/Villa/Plot/Commercial)');
+
+  if (lead.purpose && lead.purpose !== 'Any') collected.push(`Purpose = ${lead.purpose}`);
+  else missing.push('purpose (Buy or Invest)');
+
+  // ── Visit scheduling state ───────────────────────────────────
+  let visitSchedulingSection = '';
+  if (lead.status === 'Slot Pending') {
+    const day = (lead.aiContext as any)?.selectedVisitDay || '';
+    const period = (lead.aiContext as any)?.selectedVisitPeriod || '';
+    visitSchedulingSection = `
+=== VISIT SCHEDULING IN PROGRESS ===
+- Day selected by lead: ${day || 'Not yet selected — ask for a day (Monday to Sunday)'}
+- Time period: ${period || 'Not yet selected — once day is confirmed, ask Morning / Afternoon / Evening'}
+INSTRUCTION: If the user provides both day and time or a specific schedule, accept it gracefully.
+`;
   }
 
-  const systemInstruction = `You are Aura, the intelligent and Welcoming AI assistant for RealtyCloudai real estate. 
-Your primary goal is to qualify leads by collecting their property preferences (budget, location, property type, and intent) and scheduling a site visit.
+  // ── Recent conversation ──────────────────────────────────────
+  const recentChat = (lead.chatHistory || [])
+    .slice(-14)
+    .map((m: any) => `${m.role === 'user' ? 'Lead' : 'You'}: ${m.text}`)
+    .join('\n');
 
-Follow these strict rules for every response:
-1. CONVERSATIONAL & CONCISE: You are chatting on WhatsApp. Keep your responses to 1-3 short sentences. Never send large blocks of text.
-2. ONE QUESTION AT A TIME: Ask one question at a time. Do not overwhelm the user.
-3. NO HALLUCINATIONS: If property details, pricing, amenities, or document excerpts are provided in the context below, use them precisely. Never invent numbers, names, or locations.
-4. USE PROVIDED CONTEXT: All relevant property data and document excerpts will be injected into this prompt before you respond. If you see "PROJECT DOCUMENT EXCERPTS" or "PROPOSED PROPERTY" sections below, cite them directly.
-5. QUALIFY LEADS: If context is missing, collect missing details (budget, location, property type, intent) one question at a time before proceeding.
+  // ── Build the full prompt ────────────────────────────────────
+  return `You are the friendly, intelligent AI real estate assistant for ${companyName} on WhatsApp.
+Your goal is to converse naturally with the lead, answer their queries, understand their preferences, and help schedule site visits.
 
-${teamContactsContext}
+=== STRICT CONVERSATIONAL GUIDELINES ===
+1. CONCISE & NATURAL: 1–3 short sentences per WhatsApp message. Friendly, helpful, and natural (avoid sounding robotic or like an interrogation script).
+2. ANSWER QUESTIONS FIRST: If the lead asks a question about a project, price, amenities, or location, answer it directly using the available inventory and project details BEFORE asking any qualifying question.
+3. NO REPETITIVE QUESTIONS: NEVER ask for information that is already in "ALREADY COLLECTED" or that the user already mentioned in recent conversation.
+4. HANDLE CORRECTIONS & HINGLISH: If the lead changes their mind (e.g., "actually my budget is 80 Lakhs"), accept it and update the budget. Understand English, Hindi, and Hinglish.
+5. NO HALLUCINATIONS: Only mention properties and locations present in inventory: [${locationsStr}]. Never invent nonexistent listings.
+6. BROCHURE: If the lead asks for a brochure, confirm it has already been sent as a PDF file (or say one will be shared shortly). Never send arbitrary URLs in chat.
+7. VISIT BOOKING: When the lead shows interest in visiting, help them schedule smoothly. If they give a day/time, confirm it.
 
-${locationConstraintText}
+${contactSection}
+
+=== AVAILABLE INVENTORY ===
+${inventoryList}
+
+${proposedPropertySection}
 
 === CURRENT LEAD STATE ===
-- Lead Name: ${lead.name}
-- Lead ID: ${lead._id}
-- Tenant ID: ${lead.tenantId}
-- Current Status: ${lead.status}
-- Budget: ${lead.budget ? 'â‚¹' + lead.budget.toLocaleString() : 'Not provided'}
-- Preferred Location: ${lead.location || 'Not provided'}
-- Property Type: ${lead.propertyType}
+- Name: ${lead.name}
+- Status: ${lead.status}
+- Budget: ${lead.budget ? `₹${lead.budget.toLocaleString()}` : 'Not provided'}
+- Location: ${lead.location || 'Not provided'}
+- Property type: ${lead.propertyType}
 - Purpose: ${lead.purpose}
-${proposedPropertyContext}
-`;
 
-  // Route to provider service
+=== ALREADY COLLECTED — DO NOT RE-ASK ===
+${collected.length > 0 ? collected.join('\n') : 'Nothing yet'}
+
+=== STILL MISSING (weaved naturally, at most ONE per message) ===
+${missing.length > 0 ? missing.join(', ') : 'All collected — proceed to property recommendation and visit scheduling.'}
+
+${visitSchedulingSection}
+
+=== RECENT CONVERSATION ===
+${recentChat || '(No history yet — this is the first message)'}
+
+=== REQUIRED JSON OUTPUT FORMAT ===
+You MUST respond with a valid JSON object with EXACTLY this structure:
+{
+  "reply": "Your concise, friendly WhatsApp message here (1-3 sentences)",
+  "extractedData": {
+    "budget": <number in INR e.g. 7500000 if mentioned/corrected, else null>,
+    "location": <string matched location from inventory if mentioned/corrected, else null>,
+    "propertyType": <"Apartment" | "Villa" | "Plot" | "Commercial" | null>,
+    "purpose": <"Buy" | "Invest" | null>,
+    "visitDay": <"Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday" | null>,
+    "visitPeriod": <"Morning" | "Afternoon" | "Evening" | null>,
+    "isDeclined": <true if user clearly said no/not interested/rejected, else false>,
+    "isAffirmativeVisit": <true if user wants or agreed to a visit, else false>,
+    "requestHumanAgent": <true if user wants to speak to a real person/manager, else false>
+  },
+  "intent": <"inquiry" | "qualifying" | "schedule_visit" | "visit_confirmed" | "declined" | "handoff" | "general">
+}
+`;
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Public entry points
+// ─────────────────────────────────────────────────────────────
+
+export const runAgentStructuredConversation = async (
+  lead: ILead,
+  textMessage: string
+): Promise<AgentResponsePayload> => {
+  const systemInstruction = await buildSystemPrompt(lead);
+  const history = lead.chatHistory || [];
+  return await generateStructuredLLMResponse(lead, textMessage, history, systemInstruction);
+};
+
+export const runAgentConversation = async (lead: ILead, textMessage: string): Promise<string> => {
+  const systemInstruction = await buildSystemPrompt(lead);
   const history = lead.chatHistory || [];
   return await generateLLMResponse(lead, textMessage, history, systemInstruction, true);
 };
+

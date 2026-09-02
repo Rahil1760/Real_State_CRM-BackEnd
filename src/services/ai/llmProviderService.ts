@@ -93,6 +93,71 @@ async function buildRagContext(lead: any, textMessage: string): Promise<string> 
 }
 
 // ─────────────────────────────────────────────────────────────
+//  Public Interface & Types
+// ─────────────────────────────────────────────────────────────
+
+export interface ExtractedLeadData {
+  budget?: number; // Numeric amount in INR, e.g. 6000000 for 60 Lakhs, 15000000 for 1.5 Cr
+  location?: string; // Preferred location or project location
+  propertyType?: 'Apartment' | 'Villa' | 'Plot' | 'Commercial';
+  purpose?: 'Buy' | 'Invest';
+  visitDay?: string; // e.g. 'Monday', 'Saturday'
+  visitPeriod?: 'Morning' | 'Afternoon' | 'Evening';
+  visitDateISO?: string; // ISO 8601 date string if specific date/time is determined
+  isDeclined?: boolean; // True if user declined site visit or is not interested
+  isAffirmativeVisit?: boolean; // True if user agreed to site visit
+  requestHumanAgent?: boolean; // True if user requested human contact
+}
+
+export interface AgentResponsePayload {
+  reply: string; // The natural WhatsApp reply message
+  extractedData?: ExtractedLeadData;
+  intent?: 'inquiry' | 'qualifying' | 'schedule_visit' | 'visit_confirmed' | 'declined' | 'handoff' | 'general';
+}
+
+export function parseAgentJson(rawText: string): AgentResponsePayload {
+  if (!rawText || !rawText.trim()) {
+    return { reply: '' };
+  }
+
+  const text = rawText.trim();
+
+  // 1. Try direct JSON parse
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === 'object') {
+      return {
+        reply: typeof parsed.reply === 'string' ? parsed.reply.trim() : (parsed.message || text),
+        extractedData: parsed.extractedData || parsed.data || {},
+        intent: parsed.intent || 'general',
+      };
+    }
+  } catch (_) {}
+
+  // 2. Try extracting from markdown ```json ... ``` or { ... }
+  const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/) || text.match(/(\{[\s\S]*\})/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[1]);
+      if (parsed && typeof parsed === 'object') {
+        return {
+          reply: typeof parsed.reply === 'string' ? parsed.reply.trim() : (parsed.message || text),
+          extractedData: parsed.extractedData || parsed.data || {},
+          intent: parsed.intent || 'general',
+        };
+      }
+    } catch (_) {}
+  }
+
+  // 3. Fallback: return raw text as reply with empty extracted data
+  return {
+    reply: text,
+    extractedData: {},
+    intent: 'general',
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
 //  Single-call LLM Invocation via Groq (OpenAI-compatible SDK)
 // ─────────────────────────────────────────────────────────────
 
@@ -121,11 +186,11 @@ async function callGroq(
   while (retries > 0) {
     try {
       const startTime = Date.now();
-      // NO tools parameter — data is pre-injected in system prompt
       const response = await groq.chat.completions.create({
         model: modelName,
         messages,
-        temperature: 0.5,
+        temperature: 0.3,
+        response_format: { type: 'json_object' },
       });
 
       const ms = Date.now() - startTime;
@@ -138,7 +203,18 @@ async function callGroq(
     } catch (err: any) {
       retries--;
       console.error(`[Groq API Error] Retries left: ${retries}.`, err.message);
-      if (retries === 0) throw err;
+      if (retries === 0) {
+        try {
+          const fallbackResp = await groq.chat.completions.create({
+            model: modelName,
+            messages,
+            temperature: 0.3,
+          });
+          return (fallbackResp.choices[0].message.content || '').trim();
+        } catch (fbErr: any) {
+          throw fbErr;
+        }
+      }
       await new Promise(r => setTimeout(r, 1000));
     }
   }
@@ -163,7 +239,17 @@ async function callGemini(
   const genAI = new GoogleGenerativeAI(geminiApiKey);
   const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
 
-  const model = genAI.getGenerativeModel({ model: modelName, systemInstruction }, { apiVersion: 'v1beta' });
+  const model = genAI.getGenerativeModel(
+    {
+      model: modelName,
+      systemInstruction,
+      generationConfig: {
+        responseMimeType: 'application/json',
+        temperature: 0.3,
+      },
+    },
+    { apiVersion: 'v1beta' }
+  );
 
   // Gemini history must start with 'user'
   let formattedHistory = history.slice(-20).map((msg: any) => ({
@@ -177,7 +263,6 @@ async function callGemini(
   const chat = model.startChat({ history: formattedHistory });
 
   const startTime = Date.now();
-  // NO tools passed — context is pre-injected in system prompt
   const result = await chat.sendMessage(textMessage);
   const ms = Date.now() - startTime;
   console.log(`[LLM API Call] Provider: gemini | Model: ${modelName} | Time: ${ms}ms`);
@@ -194,8 +279,18 @@ export const generateLLMResponse = async (
   textMessage: string,
   history: any[],
   systemInstruction: string,
-  _toolsEnabled = true           // flag kept for API compatibility; RAG is now pre-injected
+  _toolsEnabled = true
 ): Promise<string> => {
+  const structured = await generateStructuredLLMResponse(lead, textMessage, history, systemInstruction);
+  return structured.reply;
+};
+
+export const generateStructuredLLMResponse = async (
+  lead: any,
+  textMessage: string,
+  history: any[],
+  systemInstruction: string
+): Promise<AgentResponsePayload> => {
   // Step 1: Pre-execute retrieval and inject into system prompt
   const ragContext = await buildRagContext(lead, textMessage);
   const enrichedInstruction = ragContext
@@ -204,11 +299,14 @@ export const generateLLMResponse = async (
 
   // Step 2: Single LLM call
   const provider = process.env.LLM_PROVIDER || 'gemini';
+  let rawResponse = '';
   if (provider === 'groq') {
-    return await callGroq(enrichedInstruction, history, textMessage);
+    rawResponse = await callGroq(enrichedInstruction, history, textMessage);
   } else {
-    return await callGemini(enrichedInstruction, history, textMessage);
+    rawResponse = await callGemini(enrichedInstruction, history, textMessage);
   }
+
+  return parseAgentJson(rawResponse);
 };
 
 export const analyzeFeedbackSentiment = async (feedbackText: string): Promise<'Hot' | 'Warm' | 'Cold'> => {
